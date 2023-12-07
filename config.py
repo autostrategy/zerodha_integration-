@@ -1,40 +1,36 @@
-from logging.config import dictConfig
 import os
 
-import pathlib
 from pathlib import Path
 import logging
 import json
 from dateutil.relativedelta import relativedelta
+
 # Flask
 fastapi_host = "0.0.0.0"
 fastapi_port = 5000
 debug = True
 reload = True
 
-
-# For a good understanding on config
-# See: https://www.toptal.com/python/in-depth-python-logging#:~:text=There%20are%20six%20log%20levels,particularity%20will%20be%20addressed%20next.
-# Logging
+# For a good understanding on config See: https://www.toptal.com/python/in-depth-python-logging#:~:text=There%20are
+# %20six%20log%20levels,particularity%20will%20be%20addressed%20next. Logging
 
 from logging.config import dictConfig
 
-
-
 common_date_format = "%d-%m-%Y %H:%M"
 
-max_retries = 3
+max_retries = 10
 
 
 def get_expiration_duration():
-    return relativedelta(days=2)
+    return relativedelta(days=7)
+
 
 # Use secrets.json if running on server
-secrets_path = os.getenv('SECRETS_PATH', '/home/ubuntu/secrets.json') # Default is /home/ubuntu/secrets.json
+secrets_path = os.getenv('SECRETS_PATH', '/home/ubuntu/secrets.json')  # Default is /home/ubuntu/secrets.json
 # postgres
 postgres_username = 'postgres'
-postgres_password = 'admin123'
-postgres_db_name = "hymbee_db"
+postgres_password = 'qaswerfd'
+postgres_db_name = "zerodha_integration_db"
 postgres_host = "127.0.0.1"
 postgres_port = 5432
 secret_key = 'hft-secret'
@@ -47,8 +43,37 @@ redis_port = 16380
 redis_hset_name = 'redis_user_tokens'
 frontend_url = 'http://localhost:5000'
 reset_password_url = 'http://localhost:5000/auth/process-reset-password-request'
-log_file = 'app.log'  #TODO: Create a directory, set owner and group and set log file path to /var/log/project-name/app.log
+log_file = 'app.log'  # TODO: Create a directory, set owner and group and set log file path to
+# /var/log/project-name/app.log
 default_logger = 'console'
+no_of_candles_to_consider = 10
+status_query_wait_time = 30
+sandbox_mode = True
+config_threshold_percent = 0.3
+# instrument_tokens_map = {"TCS": 16326146, "INFY": 408065, "ICICIBANK": 1270529,
+#                          "MRF": 16273154, "AXISBANK": 1510401,
+#                          "HDFCBANK": 16234754, "NIPPON": 139046660,
+#                          "3MINDIA": 121345, "CROMPTON": 16223490, "NIFTY50": 256265}
+# instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "TCS": 2953217, "INFY": 408065}
+instrument_tokens_map = {"AXISBANK": 1510401}
+# instrument_tokens_map = {"NIFTY50": 256265}
+# symbol_tokens_map = {256265: "NIFTY50"}
+symbol_tokens_map = {1510401: "AXISBANK"}
+# symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 2953217: "TCS", 408065: "INFY"}
+time_stamps = ["1", "3", "5", "15", "30"]
+# time_stamps = ["1"]
+indices_list = ["NIFTY50", "SP500", "SENSEX"]
+loss = 100
+trade1_loss_percent = 0.5
+trade2_loss_percent = 0.25
+trade3_loss_percent = 0.25
+max_trades = 3
+provide_ticker_data = False
+use_truedata = True
+# td_app = TD(truedata_username, truedata_password, live_port=None)
+# truedata_n_ticks_url = 'https://history.truedata.in/getlastnticks'
+td_app_live = None
+td_app_hist = None
 
 secrets_file = Path(secrets_path)
 
@@ -73,6 +98,12 @@ if secrets_file.is_file():
         frontend_url = secrets['frontend_url']
         default_logger = secrets.get('default_logger', 'console')
         log_file = secrets.get('log_file', 'app.log')
+        zerodha_api_key = secrets['zerodha_api_key']
+        zerodha_access_token = secrets['zerodha_access_token']
+        zerodha_api_secret = secrets['zerodha_api_secret']
+        truedata_username = secrets['truedata_username']
+        truedata_password = secrets['truedata_password']
+        realtime_port = secrets['realtime_port']
 
 redis_url = f"redis://{redis_username}:{redis_password}@{redis_host}:{redis_port}"
 
@@ -80,9 +111,8 @@ sqlalchemy_database_uri = f"postgresql://{postgres_username}:{postgres_password}
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 dir_path = Path(dir_path)
-# For a good understanding on config
-# See: https://www.toptal.com/python/in-depth-python-logging#:~:text=There%20are%20six%20log%20levels,particularity%20will%20be%20addressed%20next.
-# Logging
+# For a good understanding on config See: https://www.toptal.com/python/in-depth-python-logging#:~:text=There%20are
+# %20six%20log%20levels,particularity%20will%20be%20addressed%20next. Logging
 LOGGING_CONFIG = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -141,4 +171,3 @@ LOGGING_CONFIG = {
 }
 dictConfig(LOGGING_CONFIG)
 default_log = logging.getLogger(default_logger)
-

@@ -13,3 +13,5 @@ class TPDetailsDTO(BaseModel):
     low: Optional[float]
     entry_price: Optional[float]
     greatest_price: Optional[float]
+    tp_buffer_percent: Optional[float]
+    tp_with_buffer: Optional[float]

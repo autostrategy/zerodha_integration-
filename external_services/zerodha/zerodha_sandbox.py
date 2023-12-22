@@ -2,8 +2,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from config import zerodha_api_key, zerodha_access_token, default_log
-from kiteconnect import KiteConnect
+from config import default_log
 
 from flask import Flask, jsonify, request
 import threading
@@ -12,11 +11,11 @@ import string
 
 app = Flask(__name__)
 
-kite = KiteConnect(api_key=zerodha_api_key)
+# kite = KiteConnect(api_key=zerodha_api_key)
 
-access_token = zerodha_access_token
+# access_token = zerodha_access_token
 
-kite.set_access_token(access_token)
+# kite.set_access_token(access_token)
 
 all_1min_data = []
 counter = 0

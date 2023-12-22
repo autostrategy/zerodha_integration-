@@ -26,8 +26,8 @@ def start_truedata_server():
     global dataframe
     global td_app_live
 
-    td_app_live = TD(truedata_username, truedata_password, live_port=realtime_port, historical_api=False,
-                     log_level=logging.DEBUG, log_format="%(message)s")
+    # td_app_live = TD(truedata_username, truedata_password, live_port=realtime_port, historical_api=False,
+    #                  log_level=logging.DEBUG, log_format="%(message)s")
 
     if sandbox_mode:
         default_log.debug(f"Starting server")
@@ -190,7 +190,7 @@ def mytrade_callback_sandbox(tick_data):
 
 
 # TODO: uncomment this when testing using real data
-@td_app_live.trade_callback
+# @td_app_live.trade_callback
 def mytrade_callback(tick_data):
     global symbol_ticks
     default_log.debug(f"Tick > {tick_data}")

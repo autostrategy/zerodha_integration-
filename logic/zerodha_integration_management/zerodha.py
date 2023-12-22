@@ -22,7 +22,7 @@ if __name__ == "__main__":
     # as follows.
 
     access_token = zerodha_access_token
-    data = kite.generate_session("GnvzLglqRn76J4eVuiIMZK2bVdVLNzKf", api_secret=zerodha_api_secret)
+    data = kite.generate_session("jEyt0rB5KZbVUBJwRQL7u9aXZlyDy2YW", api_secret=zerodha_api_secret)
     # kite.set_access_token(data["access_token"])
     kite.set_access_token(access_token)
 

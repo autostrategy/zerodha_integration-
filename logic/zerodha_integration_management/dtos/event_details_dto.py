@@ -13,6 +13,10 @@ class EventDetailsDTO(BaseModel):
     event2_occur_time: Optional[datetime]
     event3_occur_time: Optional[datetime]
     event2_occur_breakpoint: Optional[float]
+    event3_occur_breakpoint: Optional[float]
+    current_candle_high: Optional[float]
+    current_candle_low: Optional[float]
+    candle_length: Optional[float]
     highest_point: Optional[float]  # For 'SELL' part
     lowest_point: Optional[float]
     event1_candle_high: Optional[float]

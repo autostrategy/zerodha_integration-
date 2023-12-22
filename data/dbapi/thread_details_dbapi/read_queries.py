@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 from config import default_log
 from data.dbapi.thread_details_dbapi.dtos.event_detail_dto import EventDetailDTO
 from data.dbapi.thread_details_dbapi.dtos.single_event_detail_dto import SingleEventDetailDTO
@@ -12,8 +14,24 @@ def get_all_incomplete_thread_details(session=None, close_session=True):
 
     db = session if session else next(get_db())
 
-    thread_details = db.query(ThreadDetails).filter(ThreadDetails.is_completed == False).order_by(
-        ThreadDetails.id.asc()).all()
+    # Assuming db is your SQLAlchemy session
+    current_date = date.today()
+
+    # Adjust the time to midnight of the current date
+    start_of_day = datetime.combine(current_date, datetime.min.time())
+    end_of_day = datetime.combine(current_date, datetime.max.time())
+
+    thread_details = db.query(
+        ThreadDetails
+    ).filter(
+        ThreadDetails.is_completed == False
+    ).filter(
+        ThreadDetails.event1_occur_time >= start_of_day
+    ).filter(
+        ThreadDetails.event1_occur_time <= end_of_day
+    ).order_by(
+        ThreadDetails.id.asc()
+    ).all()
 
     default_log.debug(f"{len(thread_details)} non completed threads retrieved")
 
@@ -26,8 +44,20 @@ def fetch_all_event_details(session=None, close_session=True):
 
     db = session if session else next(get_db())
 
-    thread_details = db.query(ThreadDetails).filter(ThreadDetails.event1_occur_time != None).order_by(
-        ThreadDetails.id.asc()).limit(10).all()
+    # Assuming db is your SQLAlchemy session
+    current_date = date.today()
+
+    # Adjust the time to midnight of the current date
+    start_of_day = datetime.combine(current_date, datetime.min.time())
+    end_of_day = datetime.combine(current_date, datetime.max.time())
+
+    thread_details = (
+        db.query(ThreadDetails)
+        .filter(ThreadDetails.event1_occur_time >= start_of_day)
+        .filter(ThreadDetails.event1_occur_time <= end_of_day)
+        .order_by(ThreadDetails.id.desc())
+        .all()
+    )
 
     default_log.debug(f"found {len(thread_details)} events")
 

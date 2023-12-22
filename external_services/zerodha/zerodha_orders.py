@@ -1,27 +1,29 @@
 import os
 import re
 from datetime import datetime, timedelta
+from typing import Optional
 
 import pandas as pd
 import pytz
 from kiteconnect import KiteConnect
 
-from config import sandbox_mode, zerodha_api_key, zerodha_access_token, use_truedata, symbol_tokens_map, \
-    truedata_n_ticks_url, truedata_username, truedata_password
+from config import sandbox_mode, zerodha_api_key, use_truedata, symbol_tokens_map, use_global_feed, zerodha_access_token
 from typing_extensions import Union
 
 from config import default_log, instrument_tokens_map
 from data.enums.signal_type import SignalType
 import requests
 
+# todo: uncomment after historical api completed
+from external_services.global_datafeed.get_data import get_global_data_feed_historical_data, get_nfo_closest_expiry_date
 from external_services.truedata.truedata_external_service import get_truedata_historical_data
 
 provide_historical_data = False
 provide_minute_data = True
+kite_access_token = ""
 
 
 class KiteSandbox:
-
     TRANSACTION_TYPE_SELL = 'SELL'
     TRANSACTION_TYPE_BUY = 'BUY'
 
@@ -102,7 +104,7 @@ class KiteSandbox:
                           f"to_date={to_date} "
                           f"interval={interval} ")
 
-        if use_truedata:
+        if use_truedata or use_global_feed:
             symbol = symbol_tokens_map[instrument_token]
             time_frame = extract_integer_from_string(interval)
             # hist_data = td_app.get_historic_data(
@@ -113,10 +115,18 @@ class KiteSandbox:
             #     options={'data_type': 'json'}
             # )
 
-            hist_data = get_truedata_historical_data(
-                trading_symbol=symbol,
-                time_frame=int(time_frame)
-            )
+            if use_truedata:
+                hist_data = get_truedata_historical_data(
+                    trading_symbol=symbol,
+                    time_frame=int(time_frame)
+                )
+            else:
+                hist_data = get_global_data_feed_historical_data(
+                    trading_symbol=symbol,
+                    time_frame=int(time_frame),
+                    from_time=from_date,
+                    to_time=to_date
+                )
 
             default_log.debug(
                 f"[LIVE] True Data historical data returned for symbol={symbol} and time_frame={interval} "
@@ -202,7 +212,14 @@ class KiteSandbox:
                 default_log.debug(
                     f"An error occurred while fetching data from zerodha. Error: {e}")
                 return []
-            
+
+
+def store_access_token_of_kiteconnect(access_token: str):
+    default_log.debug(f"inside store_access_token_of_kiteconnect with access_token={access_token}")
+    global kite_access_token
+
+    kite_access_token = access_token
+
 
 def check_open_position_status_and_close():
     kite = get_kite_account_api()
@@ -214,32 +231,32 @@ def check_open_position_status_and_close():
     for position in positions:
         symbol = position['tradingsymbol']
         quantity = position['quantity']
-        transaction_type = position["transaction_type"]
         exchange = position['exchange']
 
-        if transaction_type == 'SELL':
-        # Place a market order to buy the entire quantity to close the sell position
-            kite.place_order(
-                variety=kite.VARIETY_REGULAR,
-                exchange=exchange,
-                tradingsymbol=symbol,
-                transaction_type=kite.TRANSACTION_TYPE_BUY,
-                quantity=quantity,
-                order_type=kite.ORDER_TYPE_MARKET,
-                product=kite.PRODUCT_NRML,
-            )
-        elif transaction_type == 'BUY':
-            # Place a market order to sell the entire quantity to close the buy position
-            kite.place_order(
-                variety=kite.VARIETY_REGULAR,
-                exchange=exchange,
-                tradingsymbol=symbol,
-                transaction_type=kite.TRANSACTION_TYPE_SELL,
-                quantity=quantity,
-                order_type=kite.ORDER_TYPE_MARKET,
-                product=kite.PRODUCT_NRML,
-            )
+        # Figure out the transaction type by quantity
+        if quantity < 0:
+            default_log.debug(f"BUYING {-quantity} stocks of {symbol} having exchange={exchange}")
+            quantity = -quantity
+            transaction_type = "BUY"
+        elif quantity > 0:
+            default_log.debug(f"SELLING {quantity} stocks of {symbol} having exchange={exchange}")
+            quantity = quantity
+            transaction_type = "SELL"
+        else:
+            default_log.debug(f"Not closing position of trading_symbol={symbol} having exchange={exchange}"
+                              f"as quantity={quantity}")
+            continue
 
+        # Place a market order to buy the entire quantity to close the sell position
+        kite.place_order(
+            variety=kite.VARIETY_REGULAR,
+            exchange=exchange,
+            tradingsymbol=symbol,
+            transaction_type=transaction_type,
+            quantity=quantity,
+            order_type=kite.ORDER_TYPE_MARKET,
+            product=kite.PRODUCT_NRML,
+        )
 
 
 def round_value(symbol: str, price, exchange: str = "NSE"):
@@ -345,98 +362,121 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
     clean_symbol = extract_alpha_characters(trading_symbol)
 
     default_log.debug(f"Clean symbol of trading_symbol={trading_symbol} is {clean_symbol}")
-    # Get the nearest Thursday date in the current week
-    today = datetime.now()
 
-    if today.weekday() == 3:  # If today is Thursday, get next Thursday
-        days_until_thursday = 7
-    else:
-        days_until_thursday = (3 - today.weekday() + 7) % 7
-
-    nearest_thursday = today + timedelta(days=days_until_thursday)
-
-    # Get the date of the previous Thursday
-    days_since_previous_thursday = (today.weekday() - 3 + 7) % 7
-    previous_thursday = today - timedelta(days=days_since_previous_thursday)
-
-    # Calculate the days since the Thursday before that
-    days_since_two_thursdays_ago = days_since_previous_thursday + 7
-
-    # Calculate the date of the Thursday before that
-    two_thursdays_ago = today - timedelta(days=days_since_two_thursdays_ago)
+    # # Get the nearest Thursday date in the current week
+    # today = datetime.now()
+    #
+    # if today.weekday() == 3:  # If today is Thursday, get next Thursday
+    #     days_until_thursday = 7
+    # else:
+    #     days_until_thursday = (3 - today.weekday() + 7) % 7
+    #
+    # nearest_thursday = today + timedelta(days=days_until_thursday)
+    #
+    # # Get the date of the previous Thursday
+    # days_since_previous_thursday = (today.weekday() - 3 + 7) % 7
+    # previous_thursday = today - timedelta(days=days_since_previous_thursday)
+    #
+    # # Calculate the days since the Thursday before that
+    # days_since_two_thursdays_ago = days_since_previous_thursday + 7
+    #
+    # # Calculate the date of the Thursday before that
+    # two_thursdays_ago = today - timedelta(days=days_since_two_thursdays_ago)
 
     # For price
     # Get the nearest 50 value for the current_candle_price (both above and below)
-    nearest_50_below = int(price // 50) * 50
-    nearest_50_above = nearest_50_below + 50
+    if trading_symbol == "NIFTY":
+        nearest_50_below = int(price // 50) * 50
+        nearest_50_above = nearest_50_below + 50
 
-    # Choose the nearest 50 value based on proximity
-    if abs(price - nearest_50_below) < abs(price - nearest_50_above):
-        nearest_50_value = nearest_50_below
-    else:
-        nearest_50_value = nearest_50_above
+        # Choose the nearest 50 value based on proximity
+        if abs(price - nearest_50_below) < abs(price - nearest_50_above):
+            nearest_price_value = nearest_50_below
+        else:
+            nearest_price_value = nearest_50_above
+    else:  # if it is BANKNIFTY
+        nearest_500_below = int(price // 500) * 500
+        nearest_500_above = nearest_500_below + 500
+
+        # Choose the nearest 50 value based on proximity
+        if abs(price - nearest_500_below) < abs(price - nearest_500_above):
+            nearest_price_value = nearest_500_below
+        else:
+            nearest_price_value = nearest_500_above
+
+    # Entry BUY: CE SELL: PE NIFTY1950023DECCE
 
     # Convert the Thursday date in the format: ddMMM
-    nearest_thursday_str = nearest_thursday.strftime("%d%b").upper()
-    previous_thursday_str = previous_thursday.strftime("%d%b").upper()
-    two_thursdays_ago_str = two_thursdays_ago.strftime("%d%b").upper()
+    # nearest_thursday_str = nearest_thursday.strftime("%d%b").upper()
+    # previous_thursday_str = previous_thursday.strftime("%d%b").upper()
+    # two_thursdays_ago_str = two_thursdays_ago.strftime("%d%b").upper()
 
     option_type = 'PE' if transaction_type == SignalType.SELL else 'CE'
 
     # Create the indices symbol
-    indices_symbol_next_thursday = clean_symbol + nearest_thursday_str + str(nearest_50_value) + option_type
-    indices_symbol_previous_thursday = clean_symbol + previous_thursday_str + str(nearest_50_value) + option_type
-    indices_symbol_previous_two_thursday = clean_symbol + two_thursdays_ago_str + str(nearest_50_value) + option_type
+    closest_expiry_date = get_nfo_closest_expiry_date(index_symbol=clean_symbol)
+    indices_symbol = clean_symbol + closest_expiry_date + str(nearest_price_value) + option_type
 
-    default_log.debug(f"Trading indices option symbol prepared={indices_symbol_next_thursday} and "
-                      f"{indices_symbol_previous_thursday} ")
+    default_log.debug(f"Returning indices symbol {indices_symbol} for trading_symbol={trading_symbol} and "
+                      f"signal_type={transaction_type} and price={price}")
+    return indices_symbol
 
-    nfo_filepath = f"instrument_tokens_of_zerodha_{datetime.now().date()}.csv"
-    df = pd.read_csv(nfo_filepath)
-
-    nfo_df = df[df['exchange'] == "NFO"]
-    # Assuming 'indices_symbol' is a column in nfo_df
-    match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol_next_thursday)]
-
-    # Check if there is a match
-    if not match.empty:
-        default_log.debug(f"Found a match in nfo_df! for = {indices_symbol_next_thursday}")
-        # You can access the matched row(s) using 'match'
-        # For example, you can print the entire matched row
-        default_log.debug(match)
-        return indices_symbol_next_thursday
-    else:
-        default_log.debug(f"No match found in nfo_df for {indices_symbol_next_thursday}")
-
-    match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol_previous_thursday)]
-
-    # Check if there is a match
-    if not match.empty:
-        default_log.debug(f"Found a match in nfo_df! for {indices_symbol_previous_thursday}")
-        # You can access the matched row(s) using 'match'
-        # For example, you can print the entire matched row
-        default_log.debug(match)
-        return indices_symbol_previous_thursday
-    else:
-        default_log.debug(f"No match found in nfo_df for {indices_symbol_previous_thursday}")
-
-    match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol_previous_two_thursday)]
-
-    # Check if there is a match
-    if not match.empty:
-        default_log.debug(f"Found a match in nfo_df! for {indices_symbol_previous_two_thursday}")
-        # You can access the matched row(s) using 'match'
-        # For example, you can print the entire matched row
-        default_log.debug(match)
-        return indices_symbol_previous_two_thursday
-    else:
-        default_log.debug(f"No match found in nfo_df for {indices_symbol_previous_two_thursday}")
-        return None
+    # indices_symbol_next_thursday = clean_symbol + nearest_thursday_str + str(nearest_50_value) + option_type
+    # indices_symbol_previous_thursday = clean_symbol + previous_thursday_str + str(nearest_50_value) + option_type
+    # indices_symbol_previous_two_thursday = clean_symbol + two_thursdays_ago_str + str(nearest_50_value) + option_type
+    #
+    # default_log.debug(f"Trading indices option symbol prepared={indices_symbol_next_thursday} and "
+    #                   f"{indices_symbol_previous_thursday} ")
+    #
+    # nfo_filepath = f"instrument_tokens_of_zerodha_{datetime.now().date()}.csv"
+    # df = pd.read_csv(nfo_filepath)
+    #
+    # nfo_df = df[df['exchange'] == "NFO"]
+    # # Assuming 'indices_symbol' is a column in nfo_df
+    # match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol_next_thursday)]
+    #
+    # # Check if there is a match
+    # if not match.empty:
+    #     default_log.debug(f"Found a match in nfo_df! for = {indices_symbol_next_thursday}")
+    #     # You can access the matched row(s) using 'match'
+    #     # For example, you can print the entire matched row
+    #     default_log.debug(match)
+    #     return indices_symbol_next_thursday
+    # else:
+    #     default_log.debug(f"No match found in nfo_df for {indices_symbol_next_thursday}")
+    #
+    # match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol_previous_thursday)]
+    #
+    # # Check if there is a match
+    # if not match.empty:
+    #     default_log.debug(f"Found a match in nfo_df! for {indices_symbol_previous_thursday}")
+    #     # You can access the matched row(s) using 'match'
+    #     # For example, you can print the entire matched row
+    #     default_log.debug(match)
+    #     return indices_symbol_previous_thursday
+    # else:
+    #     default_log.debug(f"No match found in nfo_df for {indices_symbol_previous_thursday}")
+    #
+    # match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol_previous_two_thursday)]
+    #
+    # # Check if there is a match
+    # if not match.empty:
+    #     default_log.debug(f"Found a match in nfo_df! for {indices_symbol_previous_two_thursday}")
+    #     # You can access the matched row(s) using 'match'
+    #     # For example, you can print the entire matched row
+    #     default_log.debug(match)
+    #     return indices_symbol_previous_two_thursday
+    # else:
+    #     default_log.debug(f"No match found in nfo_df for {indices_symbol_previous_two_thursday}")
+    #     return None
 
 
 def get_official_kite_account_api():
+    global kite_access_token
     kite = KiteConnect(api_key=zerodha_api_key)
-    access_token = zerodha_access_token
+    # access_token = zerodha_access_token
+    access_token = kite_access_token if kite_access_token != "" else zerodha_access_token
+    default_log.debug(f"Access token used: {access_token}")
     kite.set_access_token(access_token)
     return kite
 
@@ -447,7 +487,9 @@ def get_kite_account_api():
         kite = KiteSandbox()
     else:
         kite = KiteConnect(api_key=zerodha_api_key)
-        access_token = zerodha_access_token
+        # access_token = zerodha_access_token
+        access_token = kite_access_token if kite_access_token != "" else zerodha_access_token
+        default_log.debug(f"Access token used: {access_token}")
         kite.set_access_token(access_token)
     return kite
 
@@ -767,8 +809,8 @@ def get_status_of_zerodha_order(
         return None
 
 
-def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_date: datetime, to_date: datetime,
-                        interval: str = ""):
+def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_date: Optional[datetime] = None,
+                        to_date: Optional[datetime] = None, interval: str = ""):
     default_log.debug(f"inside historical_data with "
                       f"instrument_token={instrument_token} "
                       f"from_date={from_date} "
@@ -777,7 +819,7 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
     time_frame = extract_integer_from_string(interval)
     symbol = symbol_tokens_map[instrument_token]
     try:
-        if use_truedata:
+        if use_truedata or use_global_feed:
             # hist_data = td_app.get_historic_data(
             #     symbol,
             #     start_time=from_date,
@@ -786,10 +828,18 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
             #     options={'data_type': 'json'}
             # )
 
-            hist_data = get_truedata_historical_data(
-                trading_symbol=symbol,
-                time_frame=int(time_frame)
-            )
+            if use_truedata:
+                hist_data = get_truedata_historical_data(
+                    trading_symbol=symbol,
+                    time_frame=int(time_frame)
+                )
+            else:
+                hist_data = get_global_data_feed_historical_data(
+                    trading_symbol=symbol,
+                    time_frame=int(time_frame),
+                    from_time=from_date,
+                    to_time=to_date
+                )
 
             default_log.debug(
                 f"[LIVE] True Data historical data returned for symbol={symbol} and time_frame={interval} "
@@ -850,66 +900,3 @@ def get_zerodha_order_details(kite: Union[KiteConnect, KiteSandbox], zerodha_ord
     except Exception as e:
         default_log.debug(f"An error occurred while fetching zerodha order details. Error={e}")
         return None
-
-
-def authorize_truedata(username: str = truedata_username, password: str = truedata_password):
-    default_log.debug(f"inside authorize_truedata")
-    auth_url = 'https://auth.truedata.in/token'
-
-    auth_body = {
-        'grant_type': 'password',
-        'username': username,
-        'password': password
-    }
-
-    response = requests.post(url=auth_url, data=auth_body)
-
-    data = response.json()
-
-    auth_token = data["access_token"]
-
-    return auth_token
-
-
-def get_extra_ticks_for_symbol(symbol: str):
-    default_log.debug(f"inside get_extra_ticks_for_symbol(symbol={symbol})")
-
-    n_ticks_url = truedata_n_ticks_url
-
-    # hist_data_6 = td_app_hist.get(symbol, no_of_bars=60, bar_size='tick')
-    #
-    # print(hist_data_6)
-
-    token = authorize_truedata()
-    headers = {
-        'Authorization': f'Bearer {token}'
-    }
-
-    params = {
-        'symbol': symbol,
-        'bidask': 1,
-        'response': 'json',
-        'nticks': 61,
-        'interval': 'tick'
-    }
-
-    response = requests.get(n_ticks_url, params=params, headers=headers)
-
-    data = response.json()
-
-    company_ticks = []
-    for company_tick in data['Records']:
-        company_tick_data = {
-            'timestamp': company_tick[0],
-            'ltp': company_tick[0],
-            'symbol': symbol
-        }
-
-        company_ticks.append(company_tick_data)
-
-    default_log.debug(f"Returning previous company_ticks for symbol={symbol}: {company_ticks}")
-    return company_ticks
-
-
-if __name__ == "__main__":
-    get_extra_ticks_for_symbol("ICICIBANK")

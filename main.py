@@ -17,13 +17,16 @@ import config
 from api.user_management.user_auth import auth_router
 from api.user_management.user_basic_api import user_router
 from api.event_management.event_managment_crud_api import event_router
+
+# todo: uncomment after finishing historical api
+from external_services.global_datafeed.get_data import start_global_data_feed_server
 from external_services.truedata.truedata_external_service import start_truedata_server
 from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data
-from external_services.zerodha.zerodha_ticks_service import start_kite_ticker
 from logic.zerodha_integration_management.zerodha_integration_logic import restart_event_threads, \
-    store_all_symbol_budget
+    store_all_symbol_budget, store_all_timeframe_budget
 from standard_responses.standard_json_response import standard_json_response
 from api.symbol_budget_route_management.symbol_budget_crud_api import symbol_budget_router
+from api.kite_connect_route_management.kite_connect_api_routes import kite_connect_router
 
 app = FastAPI()
 origins = [
@@ -42,6 +45,7 @@ app.add_middleware(
 app.include_router(test_router)
 app.include_router(user_router)
 app.include_router(auth_router)
+app.include_router(kite_connect_router)
 app.include_router(event_router)
 app.include_router(symbol_budget_router)
 
@@ -90,13 +94,14 @@ def run_scheduled_task():
         schedule.run_pending()
         time.sleep(1)
 
+
 @app.on_event("startup")
 async def startup():
     # Start threads here
     # results = await asyncio.gather(Foo.get_instance())
     # app.state.ws = results[0][0]
     # asyncio.create_task(expire_time_check())
-    # get_indices_data()
+    get_indices_data()
     # start_kite_ticker()
     # Create a thread for the start_truedata_server function
     # Create a separate thread for the scheduled task
@@ -105,12 +110,21 @@ async def startup():
     # Start the thread
     scheduled_task_thread.start()
 
-    truedata_thread = threading.Thread(target=start_truedata_server)
+    if config.use_truedata:
+        # TRUEDATA SERVER
+        truedata_thread = threading.Thread(target=start_truedata_server)
+        # Start the thread
+        truedata_thread.start()
 
+    # elif config.use_global_feed:
+    # GLOBAL FEED DATA SERVER
+    global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
     # Start the thread
-    truedata_thread.start()
+    global_feed_data_thread.start()
+
     # restart_event_threads()
     store_all_symbol_budget()
+    store_all_timeframe_budget()
     # pass
 
 

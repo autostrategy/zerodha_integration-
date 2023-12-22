@@ -13,7 +13,6 @@ class CheckEventsDTO(BaseModel):
     time_of_candle_formation: datetime
     time_frame_in_minutes: str
     signal_type: SignalType
-    configuration: Configuration
 
     @validator("time_frame_in_minutes")
     def validate_time_frame_in_minutes(cls, time_frame_in_minutes, **kwargs):

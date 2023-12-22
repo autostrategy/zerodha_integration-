@@ -1,0 +1,57 @@
+import requests
+import hashlib
+from fastapi import APIRouter, Request
+from starlette.responses import RedirectResponse
+
+from config import default_log, KITE_API_URL, zerodha_api_key, zerodha_api_secret, KITE_API_LOGIN_URL, homepage_url
+from decorators.handle_generic_exception import frontend_api_generic_exception
+from external_services.zerodha.zerodha_orders import store_access_token_of_kiteconnect
+
+
+kite_connect_router = APIRouter(prefix='/kite-connect', tags=['kite-connect'])
+
+
+@kite_connect_router.get("/login")
+@frontend_api_generic_exception
+def add_symbol_budget_route(request: Request):
+    default_log.debug("inside /kite-connect/login api route")
+
+    authorize_url = f"{KITE_API_LOGIN_URL}/connect/login?v=3&api_key={zerodha_api_key}"
+    return RedirectResponse(authorize_url)
+    # other_url = "http://localhost:5000/kite-connect/callback?request_token=8b178g4hg4jh8674kjk1j&state=true"
+    # response = requests.get(other_url)
+    # token_data = response.json()
+    # return RedirectResponse(other_url)
+
+
+# This route handles the callback from Kite
+@kite_connect_router.get("/callback")
+async def callback(request: Request, request_token: str):
+    default_log.debug(f"inside /kite-connect/callback with request_token={request_token}")
+    # Calculate the checksum
+    checksum_data = zerodha_api_key + request_token + zerodha_api_secret
+    checksum = hashlib.sha256(checksum_data.encode()).hexdigest()
+
+    data = {
+        'api_key': zerodha_api_key,
+        'request_token': request_token,
+        'checksum': checksum
+    }
+
+    token_url = f'{KITE_API_URL}/session/token'
+
+    response = requests.post(token_url, data=data)
+    token_data = response.json()
+
+    # Check if the request was successful
+    if response.status_code == 200 and token_data.get('status') == 'success':
+        access_token = token_data['data']['access_token']
+        default_log.debug(f"Access Token: {access_token}")
+        store_access_token_of_kiteconnect(access_token)
+        default_log.debug(f"Authorization successful")
+        return RedirectResponse(homepage_url)
+        # return standard_json_response(error=False, message="Authorization successful", data={})
+    else:
+        default_log.debug(f"Token exchange failed: {token_data}")
+        return RedirectResponse(homepage_url)
+        # return standard_json_response(error=False, message="Token exchange failed", data={})

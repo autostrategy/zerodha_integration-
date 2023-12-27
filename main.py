@@ -122,9 +122,15 @@ async def startup():
     # Start the thread
     global_feed_data_thread.start()
 
-    # restart_event_threads()
+    # Load all symbol budgets
     store_all_symbol_budget()
+
+    # Load all timeframe budgets and trade details
     store_all_timeframe_budget()
+
+    # Wait 5 seconds till GLOBAL data feed is not authenticated
+    time.sleep(5)
+    restart_event_threads()
     # pass
 
 

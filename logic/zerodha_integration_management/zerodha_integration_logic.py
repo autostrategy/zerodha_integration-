@@ -6,7 +6,8 @@ import pytz
 from config import default_log, config_threshold_percent, sandbox_mode, no_of_candles_to_consider, \
     instrument_tokens_map, buffer_for_entry_trade, buffer_for_tp_trade, initial_start_range, initial_end_range, \
     max_retries, trade1_loss_percent, trade2_loss_percent, trade3_loss_percent, indices_list, \
-    provide_ticker_data, symbol_tokens_map, use_truedata, use_global_feed
+    provide_ticker_data, symbol_tokens_map, use_truedata, use_global_feed, buffer_for_indices_entry_trade, \
+    buffer_for_indices_tp_trade
 from typing import Optional
 
 import time as tm
@@ -244,8 +245,25 @@ def get_budget_and_no_of_trade_details(
 
     # Check under which range the budget will lie
     points_range = calculate_points_range(dto.highest_point, dto.lowest_point)
-    time_frame = dto.time_frame
-    if time_frame is None:
+    # time_frame = dto.time_frame
+    # if time_frame is None:
+    #     key = 'default'
+    #     timeframe_budgets = timeframe_budget_dict.get(key, None)
+    #     if timeframe_budgets is None:
+    #         key = 'basic'
+    #         timeframe_budgets = timeframe_budget_dict.get(key)
+    #         timeframe_budget_and_trades_details_dto.budget = timeframe_budgets.budget
+    #         trades_to_make_dto = TradesToMakeDTO(
+    #             entry_trade=True,
+    #             extension1_trade=True,
+    #             extension2_trade=True
+    #         )
+    #         timeframe_budget_and_trades_details_dto.trades_to_make = trades_to_make_dto
+    #         return timeframe_budget_and_trades_details_dto
+    # else:
+    key = dto.time_frame
+    timeframe_budgets = timeframe_budget_dict.get(key, None)
+    if timeframe_budgets is None:
         key = 'default'
         timeframe_budgets = timeframe_budget_dict.get(key, None)
         if timeframe_budgets is None:
@@ -258,10 +276,6 @@ def get_budget_and_no_of_trade_details(
                 extension2_trade=True
             )
             timeframe_budget_and_trades_details_dto.trades_to_make = trades_to_make_dto
-            return timeframe_budget_and_trades_details_dto
-    else:
-        key = dto.time_frame
-        timeframe_budgets = timeframe_budget_dict.get(key, None)
 
     target_timeframe_budget = None
     for timeframe_budget in timeframe_budgets:
@@ -797,15 +811,23 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
 
         greatest = max(h1_minus_h, sl_minus_h1)
 
-        # TODO: update tp value
-        default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
-                          f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
-                          f"by subtracting extra percent buffer of {buffer_for_tp_trade}")
-
         tp_val = (event_data_dto.entry_price - greatest)
 
-        # Calculate TP with buffer
-        tp_with_buffer = tp_val - (tp_val * buffer_for_tp_trade)
+        # TODO: update tp value
+        if event_data_dto.symbol not in indices_list:
+            default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
+                              f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
+                              f"by subtracting extra percent buffer of {buffer_for_tp_trade}")
+
+            # Calculate TP with buffer
+            tp_with_buffer = tp_val - (tp_val * buffer_for_tp_trade)
+        else:
+            default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
+                              f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
+                              f"by subtracting extra percent buffer of {buffer_for_indices_tp_trade}")
+
+            # Calculate TP with buffer
+            tp_with_buffer = tp_val - (tp_val * buffer_for_indices_tp_trade)
 
         greatest = -greatest
 
@@ -832,7 +854,7 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
 
         tp_val = (event_data_dto.entry_price + greatest)
 
-        tp_with_buffer = tp_val + (tp_val * buffer_for_tp_trade)
+        tp_with_buffer = tp_val - (tp_val * buffer_for_tp_trade)
 
     tp_details = TPDetailsDTO(
         timestamp=candle_data["time"],
@@ -992,12 +1014,21 @@ def trade_logic_sell(
             timestamp = candle_data["time"]
 
             # candle_high_to_check = sell_candle_high if configuration == Configuration.HIGH else sell_candle_low
-            default_log.debug(f"Subtracting a buffer percent ({buffer_for_entry_trade}) from the sell_candle_low "
-                              f"({sell_candle_low}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
-                              f"and time_frame={event_data_dto.time_frame}")
+            if event_data_dto.symbol not in indices_list:
+                default_log.debug(f"Subtracting a buffer percent ({buffer_for_entry_trade}) from the sell_candle_low "
+                                  f"({sell_candle_low}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
+                                  f"and time_frame={event_data_dto.time_frame}")
 
-            candle_high_to_check = sell_candle_low - (sell_candle_low * buffer_for_entry_trade)
-            event_data_dto.event3_occur_breakpoint = candle_high_to_check
+                candle_high_to_check = sell_candle_low - (sell_candle_low * buffer_for_entry_trade)
+                event_data_dto.event3_occur_breakpoint = candle_high_to_check
+            else:
+                default_log.debug(f"Subtracting a buffer percent ({buffer_for_indices_entry_trade}) "
+                                  f"from the sell_candle_low ({sell_candle_low}) as the breakpoint for "
+                                  f"event 3 for symbol={event_data_dto.symbol} and "
+                                  f"time_frame={event_data_dto.time_frame}")
+
+                candle_high_to_check = sell_candle_low - (sell_candle_low * buffer_for_indices_entry_trade)
+                event_data_dto.event3_occur_breakpoint = candle_high_to_check
 
             if current_candle_high > candle_high_to_check:
                 default_log.debug(f"Event 3 occurred for symbol={event_data_dto.symbol} and "
@@ -1212,12 +1243,20 @@ def trade_logic_buy(
             timestamp = candle_data["time"]
 
             # candle_low_to_check = buy_candle_high if configuration == Configuration.HIGH else buy_candle_low
-            default_log.debug(f"Adding a buffer percent ({buffer_for_entry_trade}) to the buy_candle_high "
-                              f"({buy_candle_high}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
-                              f"and time_frame={event_data_dto.time_frame}")
+            if event_data_dto.symbol not in indices_list:
+                default_log.debug(f"Adding a buffer percent ({buffer_for_entry_trade}) to the buy_candle_high "
+                                  f"({buy_candle_high}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
+                                  f"and time_frame={event_data_dto.time_frame}")
 
-            candle_low_to_check = buy_candle_high + (buy_candle_high * buffer_for_entry_trade)
-            event_data_dto.event3_occur_breakpoint = candle_low_to_check
+                candle_low_to_check = buy_candle_high + (buy_candle_high * buffer_for_entry_trade)
+                event_data_dto.event3_occur_breakpoint = candle_low_to_check
+            else:
+                default_log.debug(f"Adding a buffer percent ({buffer_for_indices_entry_trade}) to the buy_candle_high "
+                                  f"({buy_candle_high}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
+                                  f"and time_frame={event_data_dto.time_frame}")
+
+                candle_low_to_check = buy_candle_high + (buy_candle_high * buffer_for_indices_entry_trade)
+                event_data_dto.event3_occur_breakpoint = candle_low_to_check
 
             if current_candle_low < candle_low_to_check:
                 default_log.debug(f"Event 3 occurred for symbol={event_data_dto.symbol} and "
@@ -1447,14 +1486,14 @@ def place_initial_zerodha_trades(
             greatest_price = event_data_dto.tp_values[-1].greatest_price
             old_take_profit = event_data_dto.tp_values[-1].tp_with_buffer
 
-            tp_direction = 1 if signal_type == SignalType.BUY else -1  # +1 if tp order is SELL and -1 if tp is BUY
+            # tp_direction = 1 if signal_type == SignalType.BUY else -1  # +1 if tp order is SELL and -1 if tp is BUY
             take_profit_updated = fill_price + greatest_price
 
             default_log.debug(f"Updating old TP value={old_take_profit} to {take_profit_updated} for "
                               f"MARKET order id={entry_trade_order_id} for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
 
-            take_profit_with_buffer = take_profit_updated + (take_profit_updated * tp_direction * buffer_for_tp_trade)
+            take_profit_with_buffer = take_profit_updated - (take_profit_updated * buffer_for_tp_trade)
 
             default_log.debug(f"Updating old TP (by adding/subtracting buffer of [{buffer_for_tp_trade}]) "
                               f"value={take_profit_updated} to {take_profit_with_buffer} for "
@@ -1968,6 +2007,8 @@ def start_market_logging_for_buy(
         sl_value = restart_dto.sl_value
         candle_high = restart_dto.candle_high
         candle_low = restart_dto.candle_low
+        adjusted_high = restart_dto.adjusted_high
+        adjusted_low = restart_dto.adjusted_low
 
         entry_price = restart_dto.entry_price
         trade1_quantity = restart_dto.trade1_quantity
@@ -1988,6 +2029,18 @@ def start_market_logging_for_buy(
                 interval=interval,
                 is_restart=True
             )
+
+            event_details_dto = EventDetailsDTO(
+                event1_occur_time=event1_occur_time,
+                symbol=symbol,
+                time_frame=time_frame,
+                event1_candle_high=candle_high,
+                event1_candle_low=candle_low,
+                adjusted_high=adjusted_high,
+                adjusted_low=adjusted_low,
+            )
+
+            data_dictionary[key] = event_details_dto
 
             if data is None:
                 default_log.debug(f"No data received from ZERODHA for symbol={symbol}, datetime={event1_occur_time} "
@@ -2159,7 +2212,7 @@ def start_market_logging_for_buy(
             prev_timestamp = timestamp
 
         # TODO: comment this
-        if not use_current_candle:
+        if not use_current_candle and not is_restart:
             if current_time is None:
                 current_time = data.iloc[-1]["time"]
 
@@ -2262,6 +2315,15 @@ def start_market_logging_for_buy(
                 default_log.debug(f"Previous Timestamp ({prev_timestamp}) is earlier than Current Timestamp "
                                   f"({timestamp}) for symbol={dto.symbol} and "
                                   f"time_frame={dto.time_frame}")
+
+                if prev_timestamp.hour == timestamp.hour:
+                    time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
+                else:
+                    time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
+
+                if time_difference == int(timeframe):
+                    prev_timestamp = timestamp
+                    candles_checked += 1
             else:
                 candles_checked += 1
                 prev_timestamp = timestamp
@@ -2415,7 +2477,7 @@ def start_market_logging_for_buy(
                                 f"with quantity={quantity} with signal_type={SignalType.SELL}")
 
                         dto.tp_order_id = tp_order_id
-                        dto.tp_candle_time = datetime.now()
+                        dto.tp_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
                         dto.tp_hit = True
                         data_not_found = False
                         break
@@ -2439,7 +2501,7 @@ def start_market_logging_for_buy(
                                 f"with quantity={quantity} with signal_type={SignalType.SELL}")
 
                         dto.sl_order_id = sl_order_id
-                        dto.sl_candle_time = datetime.now()
+                        dto.sl_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
                         dto.sl_hit = True
                         data_not_found = False
                         break
@@ -3043,6 +3105,8 @@ def start_market_logging_for_sell(
         sl_value = restart_dto.sl_value
         candle_high = restart_dto.candle_high
         candle_low = restart_dto.candle_low
+        adjusted_high = restart_dto.adjusted_high
+        adjusted_low = restart_dto.adjusted_low
 
         entry_price = restart_dto.entry_price
         trade1_quantity = restart_dto.trade1_quantity
@@ -3057,6 +3121,19 @@ def start_market_logging_for_sell(
         if (event1_occur_time is not None) and (event2_occur_time is None):
             # Start the thread from event 1 timestamp
             # Provide the following: EVENT1_OCCUR_TIME, LOWEST_POINT, SL_VALUE
+
+            event_details_dto = EventDetailsDTO(
+                event1_occur_time=event1_occur_time,
+                symbol=symbol,
+                time_frame=time_frame,
+                event1_candle_high=candle_high,
+                event1_candle_low=candle_low,
+                adjusted_high=adjusted_high,
+                adjusted_low=adjusted_low,
+            )
+
+            data_dictionary[key] = event_details_dto
+
             data = get_zerodha_data(
                 from_date=event1_occur_time,
                 instrument_token=instrument_token,
@@ -3232,7 +3309,7 @@ def start_market_logging_for_sell(
             prev_timestamp = timestamp
 
         # TODO: comment this
-        if not use_current_candle:
+        if not use_current_candle and not is_restart:
             if temp_current_time is None:
                 temp_current_time = data.iloc[-1]["time"]
 
@@ -3335,6 +3412,15 @@ def start_market_logging_for_sell(
                 default_log.debug(f"Previous Timestamp ({prev_timestamp}) is earlier than Current Timestamp "
                                   f"({timestamp}) for symbol={dto.symbol} and "
                                   f"time_frame={dto.time_frame}")
+
+                if prev_timestamp.hour == timestamp.hour:
+                    time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
+                else:
+                    time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
+
+                if time_difference == int(timeframe):
+                    prev_timestamp = timestamp
+                    candles_checked += 1
             else:
                 candles_checked += 1
                 prev_timestamp = timestamp
@@ -3487,7 +3573,7 @@ def start_market_logging_for_sell(
                                 f"with quantity={tp_quantity} with signal_type={SignalType.SELL}")
 
                         dto.tp_order_id = tp_order_id
-                        dto.tp_candle_time = datetime.now()
+                        dto.tp_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
                         break
 
                     # Check SL-M hit or not
@@ -3510,7 +3596,7 @@ def start_market_logging_for_sell(
                                 f"with quantity={sl_quantity} with signal_type={SignalType.SELL}")
 
                         dto.sl_order_id = sl_order_id
-                        dto.sl_candle_time = datetime.now()
+                        dto.sl_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
                         break
 
             default_log.debug(f"Storing SL value of symbol={symbol}, timeframe={timeframe}, "
@@ -4097,7 +4183,9 @@ def restart_event_threads():
                 event2_breakpoint=thread_detail.event2_breakpoint,
                 lowest_point=lowest_point,
                 highest_point=highest_point,
-                sl_value=sl_value
+                sl_value=sl_value,
+                adjusted_high=thread_detail.adjusted_high,
+                adjusted_low=thread_detail.adjusted_high,
             )
 
             if signal_type == SignalType.BUY:
@@ -4143,7 +4231,9 @@ def restart_event_threads():
                 event2_occur_time=thread_detail.event2_occur_time,
                 lowest_point=lowest_point,
                 highest_point=highest_point,
-                sl_value=sl_value
+                sl_value=sl_value,
+                adjusted_high=thread_detail.adjusted_high,
+                adjusted_low=thread_detail.adjusted_high,
             )
 
             if signal_type == SignalType.BUY:
@@ -4200,6 +4290,8 @@ def restart_event_threads():
                 sl_order_id=sl_order_id,
                 extension1_quantity=extension1_quantity,
                 extension2_quantity=extension2_quantity,
+                adjusted_high=thread_detail.adjusted_high,
+                adjusted_low=thread_detail.adjusted_high,
             )
 
             if signal_type == SignalType.BUY:

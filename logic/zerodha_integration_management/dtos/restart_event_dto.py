@@ -9,6 +9,8 @@ class RestartEventDTO(BaseModel):
     time_frame: str
     candle_high: Optional[float]
     candle_low: Optional[float]
+    adjusted_high: Optional[float]
+    adjusted_low: Optional[float]
     event1_occur_time: Optional[datetime]
     event2_breakpoint: Optional[float]
     event2_occur_time: Optional[datetime]

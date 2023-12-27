@@ -414,16 +414,19 @@ def on_message(ws, message):
                         if periodicity == "MINUTE":  # for historical data
                             instrument_symbol = data["Request"]["InstrumentIdentifier"]
                             time_frame = int(time_frame)
-                            add_historical_data(
-                                symbol=instrument_symbol,
-                                time_frame=str(time_frame),
-                                hist_data=data["Result"]
-                            )
+                            if len(data['Result']) > 0:
+                                # Last data is initial data of GLOBAL DATA FEED i.e. from_time
+                                add_historical_data(
+                                    symbol=instrument_symbol,
+                                    time_frame=str(time_frame),
+                                    hist_data=[data["Result"][0]]
+                                )
 
                         elif periodicity == "TICK":
                             InstIdentifier = data['Request']["InstrumentIdentifier"]
                             default_log.debug(f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
-                            add_previous_tick_data(symbol=InstIdentifier, previous_tick_data=data['Result'])
+
+                            add_previous_tick_data(symbol=InstIdentifier, previous_tick_data=[data['Result'][0]])
 
         elif "LastTradeTime" in data.keys():
             default_log.debug(f"Data: {data}")
@@ -431,17 +434,18 @@ def on_message(ws, message):
 
 
 def on_error(ws, error):
-    print("Error")
+    default_log.debug("Error")
 
 
 def on_close(ws):
-    print("Reconnecting...")
+    default_log.debug("Reconnecting...")
     websocket.setdefaulttimeout(30)
     ws.connect(endpoint)
 
 
 def on_open(ws):
-    # print("Connected...")
+    default_log.debug("Connected...")
+
     def run(*args):
         time.sleep(1)
         Authenticate(ws)
@@ -508,11 +512,15 @@ def get_global_data_feed_historical_data(
 
     if from_time is not None:
         key = (trading_symbol, int(time_frame))
-        hist_data = historical_data.get(key, None)
-        if hist_data is not None:
-            default_log.debug(f"Returning historical data for symbol={trading_symbol} and time_frame={time_frame} "
-                              f"where from_time={from_time} and to_time={to_time}. Data returned: {hist_data}")
-            return hist_data
+
+        hist_data = historical_data.get(key, [])
+        if len(hist_data) > 0:
+            # Check if hist_data timestamp matched the to_time timestamp
+            hist_data_timestamp = hist_data[0]['timestamp']
+            if hist_data_timestamp == to_time.astimezone(pytz.timezone("Asia/Kolkata")):
+                default_log.debug(f"Returning historical data for symbol={trading_symbol} and time_frame={time_frame} "
+                                  f"where from_time={from_time} and to_time={to_time}. Data returned: {hist_data}")
+                return hist_data
 
         # Get Historical Data using From Time and To Time
         from_time_in_epochs = str(int(from_time.timestamp()))
@@ -526,20 +534,36 @@ def get_global_data_feed_historical_data(
         )
 
         # Wait till data is fetched and stored in the global historical_data variable
-        key = (trading_symbol, int(time_frame))
-        hist_data = historical_data.get(key, [])
+        # key = (trading_symbol, int(time_frame))
 
-        if trading_symbol not in symbols:
-            symbols.append(trading_symbol)
+        return []
 
-            SubscribeRealtime(ws=global_feedata_websocket, instrument_identifier=trading_symbol)
-            default_log.debug(f"Started subscribing to Global Feed about symbol={trading_symbol}")
+        # Get Historical Data using From Time and To Time
+        # from_time_in_epochs = str(int(from_time.timestamp()))
+        # to_time_in_epochs = str(int(to_time.timestamp()))
+        # GetHistory(
+        #     ws=global_feedata_websocket,
+        #     instrument_identifier=trading_symbol,
+        #     time_frame=time_frame,
+        #     from_time_in_epochs=from_time_in_epochs,
+        #     to_time_in_epochs=to_time_in_epochs
+        # )
+        #
+        # # Wait till data is fetched and stored in the global historical_data variable
+        # key = (trading_symbol, int(time_frame))
+        # hist_data = historical_data.get(key, [])
 
-            symbols_interval_data[trading_symbol] = {time_frame: []}
-            symbols_interval_data[trading_symbol][time_frame] = []
-            default_log.debug(f"[NEW] Symbol interval data: {symbols_interval_data}")
-
-        return hist_data
+        # if trading_symbol not in symbols:
+        #     symbols.append(trading_symbol)
+        #
+        #     SubscribeRealtime(ws=global_feedata_websocket, instrument_identifier=trading_symbol)
+        #     default_log.debug(f"Started subscribing to Global Feed about symbol={trading_symbol}")
+        #
+        #     symbols_interval_data[trading_symbol] = {time_frame: []}
+        #     symbols_interval_data[trading_symbol][time_frame] = []
+        #     default_log.debug(f"[NEW] Symbol interval data: {symbols_interval_data}")
+        #
+        # return hist_data
 
     # Get Tick Data
     if trading_symbol not in symbols:

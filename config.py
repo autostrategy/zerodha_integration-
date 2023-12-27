@@ -53,15 +53,15 @@ config_threshold_percent = 0.3
 #                          "MRF": 16273154, "AXISBANK": 1510401,
 #                          "HDFCBANK": 16234754, "NIPPON": 139046660,
 #                          "3MINDIA": 121345, "CROMPTON": 16223490, "NIFTY50": 256265, "BANKNIFTY": 260105}
-# instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "INFY": 408065, "TECHM": 3465729, "BANKNIFTY": 260105, "NIFTY": 256265}
-instrument_tokens_map = {"BANKNIFTY": 260105, "NIFTY": 256265}
+instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "INFY": 408065, "TECHM": 3465729, "BANKNIFTY": 260105, "NIFTY": 256265}
+# instrument_tokens_map = {"BANKNIFTY": 260105, "NIFTY": 256265}
 # instrument_tokens_map = {"AXISBANK": 1510401}
 # instrument_tokens_map = {"NIFTY": 256265}
 # symbol_tokens_map = {256265: "NIFTY"}
 # symbol_tokens_map = {1510401: "AXISBANK"}
 # symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 969473: "WIPRO"}
-# symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 260105: "BANKNIFTY", 256265: "NIFTY"}
-symbol_tokens_map = {260105: "BANKNIFTY", 256265: "NIFTY"}
+symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 260105: "BANKNIFTY", 256265: "NIFTY"}
+# symbol_tokens_map = {260105: "BANKNIFTY", 256265: "NIFTY"}
 time_stamps = ["1", "3", "5", "15"]
 # time_stamps = ["1"]
 indices_list = ["NIFTY", "BANKNIFTY", "SP500", "SENSEX"]
@@ -84,6 +84,9 @@ initial_end_range = 5
 
 NIFTY_INDEX_SYMBOL = "23DEC"
 BANKNIFTY_INDEX_SYMBOL = "23DEC"
+
+buffer_for_indices_entry_trade = 0.0001
+buffer_for_indices_tp_trade = 0.0001
 
 
 secrets_file = Path(secrets_path)

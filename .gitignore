@@ -146,3 +146,4 @@ rithmic_ssl_cert_auth_params
 *.db
 secrets.json
 *.csv
+*.zip

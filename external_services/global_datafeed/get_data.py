@@ -274,7 +274,7 @@ def GetHistory(
     from_time_string = f'"From":{from_time_in_epochs}'
     to_time_string = f'"To":{to_time_in_epochs}'
 
-    isShortIdentifier = "true"
+    isShortIdentifier = "false" if instrument_identifier in indices_list else "true"
     # strMessage = '{"MessageType":"GetHistory","Period":"' + Period + '","UserTag":"' + user_tag + '","From":"' + from_time_in_epochs + '","To": "' + to_time_in_epochs + '","Exchange":"' + ExchangeName + '","InstrumentIdentifier":"' + InstIdentifier + '","Periodicity":"' + Periodicity + '","isShortIdentifier":"' + isShortIdentifier + '"}'
     # strMessage = '{"MessageType":"GetHistory","From":"' + from_time_in_epochs + '","Exchange":"' + ExchangeName + '","InstrumentIdentifier":"' + InstIdentifier + '","Periodicity":"' + Periodicity + '","isShortIdentifier":"' + isShortIdentifier + '"}'
 
@@ -413,6 +413,10 @@ def on_message(ws, message):
 
                         if periodicity == "MINUTE":  # for historical data
                             instrument_symbol = data["Request"]["InstrumentIdentifier"]
+
+                            if instrument_symbol.find("-I") != -1:
+                                instrument_symbol = instrument_symbol.split('-')[0]
+
                             time_frame = int(time_frame)
                             if len(data['Result']) > 0:
                                 # Last data is initial data of GLOBAL DATA FEED i.e. from_time

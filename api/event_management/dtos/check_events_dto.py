@@ -10,7 +10,6 @@ from data.enums.configuration import Configuration
 
 class CheckEventsDTO(BaseModel):
     symbol: str
-    time_of_candle_formation: datetime
     time_frame_in_minutes: str
     signal_type: SignalType
 

@@ -1,13 +1,13 @@
-import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
 import pytz
 from kiteconnect import KiteConnect
 
-from config import sandbox_mode, zerodha_api_key, use_truedata, symbol_tokens_map, use_global_feed, zerodha_access_token
+from config import sandbox_mode, zerodha_api_key, use_truedata, symbol_tokens_map, use_global_feed, \
+    zerodha_access_token, zerodha_api_secret
 from typing_extensions import Union
 
 from config import default_log, instrument_tokens_map
@@ -21,6 +21,52 @@ from external_services.truedata.truedata_external_service import get_truedata_hi
 provide_historical_data = False
 provide_minute_data = True
 kite_access_token = ""
+
+import os
+
+TOKEN_FILE_PATH = 'access_token.txt'
+
+
+def get_access_token():
+    global kite_access_token
+    default_log.debug(f"inside get_access_token")
+    try:
+        with open(TOKEN_FILE_PATH, 'r') as file:
+            access_token = file.read().strip()
+            default_log.debug(f"Using the following access_token={access_token}")
+            kite_access_token = access_token
+    except FileNotFoundError:
+        kite_access_token = ""
+        return ""
+
+
+def save_access_token(access_token):
+    default_log.debug(f"Saving Access Token ({access_token}) to {TOKEN_FILE_PATH}")
+    with open(TOKEN_FILE_PATH, 'w') as file:
+        file.write(access_token)
+
+    default_log.debug(f"Saved Access Token ({access_token}) to {TOKEN_FILE_PATH}")
+
+
+def get_access_token_from_request_token(request_token: str):
+    global kite_access_token
+    default_log.debug(f"inside get_access_token_from_request_token with request_token={request_token}")
+
+    try:
+        kite_connect = KiteConnect(api_key=zerodha_api_key)
+
+        data = kite_connect.generate_session(request_token=request_token, api_secret=zerodha_api_secret)
+
+        access_token = data["access_token"]
+        default_log.debug(f"Access token retrieved from request_token={request_token} is {access_token} "
+                          f"now setting the access token ({access_token}) to kite_access_token global variable")
+        kite_access_token = access_token
+        save_access_token(access_token)
+        return access_token
+    except Exception as e:
+        default_log.debug(f"An error occurred while getting access token for request_token={request_token}. "
+                          f"Error: {e}")
+        return None
 
 
 class KiteSandbox:
@@ -224,6 +270,8 @@ def store_access_token_of_kiteconnect(access_token: str):
 def check_open_position_status_and_close():
     kite = get_kite_account_api()
 
+    cancel_all_open_orders(kite)
+
     # Fetch open positions
     positions = kite.positions()['net']
 
@@ -259,8 +307,53 @@ def check_open_position_status_and_close():
         )
 
 
+def get_instrument_token_for_symbol(symbol: str, exchange: str = "NSE"):
+    default_log.debug(f"inside get_instrument_token_for_symbol with symbol={symbol} and "
+                      f"exchange={exchange}")
+
+    try:
+        file_path = f"instrument_tokens_of_zerodha_{datetime.now().date()}.csv"
+        instrument_tokens_df = pd.read_csv(file_path)
+
+        if exchange == "NSE":
+            instrument_filtered_by_exchange = instrument_tokens_df[
+                (instrument_tokens_df['exchange'] == exchange) & (instrument_tokens_df['segment'] == exchange)]
+            instruments_filtered_by_trading_symbol = instrument_filtered_by_exchange[
+                instrument_tokens_df['tradingsymbol'] == symbol]
+
+        else:
+            instrument_tokens_filtered_by_exchange = instrument_tokens_df[
+                (instrument_tokens_df['exchange'] == "NSE") & (instrument_tokens_df['segment'] == "INDICES")]
+
+            if symbol == "NIFTY":
+                symbol = "NIFTY 50"
+            elif symbol == "BANKNIFTY":
+                symbol = "NIFTY BANK"
+
+            instruments_filtered_by_trading_symbol = instrument_tokens_filtered_by_exchange[
+                instrument_tokens_filtered_by_exchange['tradingsymbol'].str.contains(symbol)]
+
+        if not instruments_filtered_by_trading_symbol.empty:
+            instrument_token = instruments_filtered_by_trading_symbol.iloc[0]['instrument_token']
+            default_log.debug(f"Instrument token found for symbol={symbol} and exchange={exchange}: {instrument_token}")
+            return int(instrument_token)
+        else:
+            default_log.debug(f"Instrument token not found for symbol={symbol} and exchange={exchange}")
+            return None
+
+    except Exception as e:
+        default_log.debug(f"An error occurred while instrument token id for symbol={symbol} and "
+                          f"exchange={exchange}. Error: {e}")
+        return None
+
+
 def round_value(symbol: str, price, exchange: str = "NSE"):
-    instrument_token = instrument_tokens_map[symbol]
+    instrument_token = instrument_tokens_map.get(symbol, None)
+    if instrument_token is None:
+        # Get the instrument token for the instrument_tokens csv file
+        instrument_token = get_instrument_token_for_symbol(symbol=symbol, exchange=exchange)
+        default_log.debug(f"instrument token received for symbol={symbol} and exchange={exchange}: {instrument_token}")
+
     default_log.debug(f'inside round_value with Price {price} '
                       f'and instrument_token={instrument_token} and symbol={symbol}')
 
@@ -880,6 +973,29 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
         default_log.debug(
             f"An error occurred while fetching data from zerodha. Error: {e}")
         return []
+
+
+def cancel_all_open_orders(kite: Union[KiteConnect, KiteSandbox]):
+    default_log.debug(f"inside cancel_all_open_orders")
+
+    # Get all order
+    zerodha_orders = kite.orders()
+
+    if len(zerodha_orders) == 0:
+        default_log.debug("No orders found for the Zerodha Account")
+        return
+
+    # Filter OPEN, MODIFIED, TRIGGER_PENDING orders
+    for order in zerodha_orders:
+        order_status = order['status']
+        order_id = order['order_id']
+        if order_status in ['OPEN', 'MODIFIED', 'TRIGGER_PENDING']:
+            default_log.debug(f"Order with id={order_id} is in {order_status} state "
+                              f"so will have to cancel the order")
+
+        cancel_order(kite, order_id)
+
+    return
 
 
 def get_zerodha_order_details(kite: Union[KiteConnect, KiteSandbox], zerodha_order_id: str):

@@ -14,21 +14,16 @@ def get_all_incomplete_thread_details(session=None, close_session=True):
 
     db = session if session else next(get_db())
 
-    # Assuming db is your SQLAlchemy session
-    current_date = date.today()
+    # current_date = date.today()
 
     # Adjust the time to midnight of the current date
-    start_of_day = datetime.combine(current_date, datetime.min.time())
-    end_of_day = datetime.combine(current_date, datetime.max.time())
+    # start_of_day = datetime.combine(current_date, datetime.min.time())
+    # end_of_day = datetime.combine(current_date, datetime.max.time())
 
     thread_details = db.query(
         ThreadDetails
     ).filter(
         ThreadDetails.is_completed == False
-    ).filter(
-        ThreadDetails.event1_occur_time >= start_of_day
-    ).filter(
-        ThreadDetails.event1_occur_time <= end_of_day
     ).order_by(
         ThreadDetails.id.asc()
     ).all()

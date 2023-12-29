@@ -21,7 +21,8 @@ from api.event_management.event_managment_crud_api import event_router
 # todo: uncomment after finishing historical api
 from external_services.global_datafeed.get_data import start_global_data_feed_server
 from external_services.truedata.truedata_external_service import start_truedata_server
-from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data
+from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data, \
+    get_access_token
 from logic.zerodha_integration_management.zerodha_integration_logic import restart_event_threads, \
     store_all_symbol_budget, store_all_timeframe_budget
 from standard_responses.standard_json_response import standard_json_response
@@ -101,6 +102,7 @@ async def startup():
     # results = await asyncio.gather(Foo.get_instance())
     # app.state.ws = results[0][0]
     # asyncio.create_task(expire_time_check())
+    get_access_token()
     get_indices_data()
     # start_kite_ticker()
     # Create a thread for the start_truedata_server function

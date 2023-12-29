@@ -27,7 +27,7 @@ from data.enums.trades import Trades
 from external_services.zerodha.zerodha_orders import place_zerodha_order_with_stop_loss, \
     place_zerodha_order_with_take_profit, update_zerodha_order_with_stop_loss, update_zerodha_order_with_take_profit, \
     get_kite_account_api, place_zerodha_order, get_historical_data, cancel_order, get_indices_symbol_for_trade, \
-    get_status_of_zerodha_order, get_zerodha_order_details, round_value
+    get_status_of_zerodha_order, get_zerodha_order_details, round_value, get_instrument_token_for_symbol
 from external_services.zerodha.zerodha_ticks_service import get_candlestick_data_using_ticker
 from logic.zerodha_integration_management.dtos.event_details_dto import EventDetailsDTO
 from logic.zerodha_integration_management.dtos.restart_event_dto import RestartEventDTO
@@ -39,7 +39,6 @@ from logic.zerodha_integration_management.dtos.trades_to_make_dto import TradesT
 from standard_responses.dbapi_exception_response import DBApiExceptionResponse
 
 # kite = get_kite_account_api()
-symbol_event_details = dict()
 symbol_stop_loss_details = dict()
 indices_proxy_dictionary = dict()
 
@@ -543,16 +542,23 @@ def log_event_trigger(dto: CheckEventsDTO):
     then the thread should start at 6:10 and not at 6:03
     """
 
-    candle_time = dto.time_of_candle_formation
-    candle_time = candle_time.astimezone(pytz.timezone("Asia/Kolkata"))
+    # candle_time = dto.time_of_candle_formation
+    # candle_time = candle_time.astimezone(pytz.timezone("Asia/Kolkata"))
 
     # Get the wait time
-    wait_time = get_wait_time(candle_time, time_frame=int(dto.time_frame_in_minutes))
-    default_log.debug(f"Wait time for symbol={dto.symbol} having time_frame={dto.time_frame_in_minutes} and "
-                      f"candle_time={dto.time_of_candle_formation} is {wait_time} "
-                      f"seconds")
+    # wait_time = get_wait_time(candle_time, time_frame=int(dto.time_frame_in_minutes))
+    # default_log.debug(f"Wait time for symbol={dto.symbol} having time_frame={dto.time_frame_in_minutes} and "
+    #                   f"candle_time={dto.time_of_candle_formation} is {wait_time} "
+    #                   f"seconds")
     symbol = dto.symbol
     inst_token = instrument_tokens_map[dto.symbol]
+
+    exchange = "NFO" if symbol in indices_list else "NSE"
+    if inst_token is None:
+        inst_token = get_instrument_token_for_symbol(symbol, exchange)
+        default_log.debug(f"instrument token received for symbol={symbol} and exchange={exchange}: "
+                          f"{inst_token}")
+
     time_frame = dto.time_frame_in_minutes
     signal_type = dto.signal_type
     configuration = Configuration.HIGH if dto.signal_type == SignalType.BUY else Configuration.LOW
@@ -560,11 +566,11 @@ def log_event_trigger(dto: CheckEventsDTO):
     # Create and start a thread for each symbol
     if signal_type == SignalType.BUY:
         thread = threading.Thread(target=start_market_logging_for_buy,
-                                  args=(symbol, time_frame, inst_token, wait_time, configuration))
+                                  args=(symbol, time_frame, inst_token, 2, configuration))
         thread.start()
     else:
         thread = threading.Thread(target=start_market_logging_for_sell,
-                                  args=(symbol, time_frame, inst_token, wait_time, configuration))
+                                  args=(symbol, time_frame, inst_token, 2, configuration))
         thread.start()
 
     # Let the threads run independently
@@ -574,6 +580,7 @@ def log_event_trigger(dto: CheckEventsDTO):
 # Used initially to get the initial data and later used again and again
 def get_zerodha_data(
         instrument_token: int,
+        market_symbol: str,
         interval: str,
         from_date: datetime = None,
         is_restart: bool = False
@@ -582,15 +589,16 @@ def get_zerodha_data(
     for attempt in range(max_retries):
         default_log.debug("inside get_zerodha_data with "
                           f"instrument_token={instrument_token} "
+                          f"market_symbol={market_symbol} "
                           f"from_date={from_date} "
                           f"interval={interval} "
                           f"is_restart={is_restart} ")
 
         market_symbol = ""
 
-        for k, v in instrument_tokens_map.items():
-            if v == instrument_token:
-                market_symbol = k
+        # for k, v in instrument_tokens_map.items():
+        #     if v == instrument_token:
+        #         market_symbol = k
 
         if interval == "minute":
             time_frame = 1
@@ -611,6 +619,7 @@ def get_zerodha_data(
         current_datetime = None
         if is_restart:
             current_datetime = from_date.astimezone(pytz.timezone("Asia/Kolkata")) + timedelta(minutes=time_frame)
+            current_datetime = current_datetime.astimezone(pytz.timezone("Asia/Kolkata"))
             # if (not use_truedata) or (not use_global_feed):
             #     current_datetime = from_date.astimezone(pytz.timezone("Asia/Kolkata")) + timedelta(minutes=time_frame)
             #     from_date = from_date.astimezone(pytz.timezone("Asia/Kolkata"))
@@ -744,10 +753,12 @@ def get_next_data(
 
         from_date = from_timestamp
         to_date = from_timestamp + timedelta(minutes=int(timeframe))
+        to_date = to_date.astimezone(pytz.timezone("Asia/Kolkata"))
 
         # Fetch new candle data
         data = get_zerodha_data(
             instrument_token=instrument_token,
+            market_symbol=symbol,
             from_date=from_date,
             interval=interval,
             is_restart=is_restart
@@ -772,6 +783,7 @@ def get_next_data(
         # Fetch new candle data
         data = get_zerodha_data(
             instrument_token=instrument_token,
+            market_symbol=symbol,
             from_date=current_time,
             interval=interval
         )
@@ -1352,7 +1364,7 @@ def update_tp_and_sl_status(event_data_dto: EventDetailsDTO, data_dictionary):
         sl_order_id = dto.sl_order_id
 
         default_log.debug(f"Getting status of tp_order_id={tp_order_id} and "
-                          f"sl_order_id={sl_order_id}")
+                          f"sl_order_id={sl_order_id} of symbol={symbol} having timeframe={time_frame}")
         tp_order_details = kite.order_history(tp_order_id)
         sl_order_details = kite.order_history(sl_order_id)
 
@@ -1363,7 +1375,8 @@ def update_tp_and_sl_status(event_data_dto: EventDetailsDTO, data_dictionary):
         event_data_dto.sl_order_status = sl_order_status
 
         default_log.debug(f"Status of tp_order_id={tp_order_id} is {tp_order_status} and "
-                          f"sl_order_id={sl_order_id} is {tp_order_status}")
+                          f"sl_order_id={sl_order_id} is {tp_order_status} for symbol={symbol} having timeframe="
+                          f"{time_frame}")
 
         if (tp_order_status is not None) and (tp_order_status == "COMPLETE"):
             default_log.debug(f"TP Hit of symbol={symbol} at "
@@ -1405,11 +1418,12 @@ def place_initial_zerodha_trades(
         candle_data,
         symbol: str,
         loss_budget: float,
-        indices_symbol: str = None
+        indices_symbol: str = None,
+        extra_extension: bool = False
 ) -> tuple[EventDetailsDTO, bool]:
     default_log.debug(f"inside place_zerodha_trades with event_data_dto={event_data_dto} and "
                       f"signal_type={signal_type} for symbol={symbol} and indices_symbol={indices_symbol} and "
-                      f"loss_budget={loss_budget}")
+                      f"loss_budget={loss_budget} and extra_extension status={extra_extension}")
     kite = get_kite_account_api()
     entry_price = event_data_dto.entry_price
     entry_sl_value = event_data_dto.sl_value
@@ -1423,13 +1437,21 @@ def place_initial_zerodha_trades(
     # Round off trade1_quantity to 0 decimal places and convert to int
     trade1_quantity = int(round(trade1_quantity, 0))
 
-    default_log.debug(f"Creating MARKET order for trading_symbol={symbol} "
-                      f"transaction_type={signal_type} and quantity={trade1_quantity} "
-                      f"at timestamp={candle_data['time']} with event1_occur_time={event_data_dto.event1_occur_time} "
-                      f"and event3_occur_time={event_data_dto.event3_occur_time} and "
-                      f"indices_symbol={indices_symbol}")
+    if not extra_extension:
+        default_log.debug(f"Creating MARKET order for trading_symbol={symbol} "
+                          f"transaction_type={signal_type} and quantity={trade1_quantity} "
+                          f"at timestamp={candle_data['time']} with event1_occur_time={event_data_dto.event1_occur_time} "
+                          f"and event3_occur_time={event_data_dto.event3_occur_time} and "
+                          f"indices_symbol={indices_symbol}")
+    else:
+        default_log.debug(f"[BEYOND EXTENSION] Creating MARKET order for trading_symbol={symbol} "
+                          f"transaction_type={signal_type} and quantity={event_data_dto.extension_quantity} "
+                          f"at timestamp={candle_data['time']} with event1_occur_time={event_data_dto.event1_occur_time} "
+                          f"and event3_occur_time={event_data_dto.event3_occur_time} and "
+                          f"indices_symbol={indices_symbol}")
 
     event_data_dto.trade1_quantity = trade1_quantity
+    extra_extension_quantity = event_data_dto.extension_quantity
 
     # Start trade
     if sandbox_mode:
@@ -1437,8 +1459,8 @@ def place_initial_zerodha_trades(
             kite=kite,
             trading_symbol=symbol if indices_symbol is None else indices_symbol,
             transaction_type=signal_type,
-            quantity=trade1_quantity if indices_symbol is None else 50,
-            exchange="NSE" if indices_symbol is None else "NFO",
+            quantity=trade1_quantity if not extra_extension else extra_extension_quantity,
+            exchange="NSE",
             average_price=event_data_dto.entry_price
         )
     else:
@@ -1446,25 +1468,39 @@ def place_initial_zerodha_trades(
             kite=kite,
             trading_symbol=symbol if indices_symbol is None else indices_symbol,
             transaction_type=signal_type,
-            quantity=trade1_quantity if indices_symbol is None else 50,
-            exchange="NSE" if indices_symbol is None else "NFO"
+            quantity=trade1_quantity if not extra_extension else extra_extension_quantity,
+            exchange="NSE"
         )
 
     if entry_trade_order_id is None:
-        default_log.debug(
-            f"An error has occurred while placing MARKET order for symbol={symbol} and "
-            f"event_data_dto={event_data_dto}")
+        if not extra_extension:
+            default_log.debug(
+                f"An error has occurred while placing MARKET order for symbol={symbol} having timeframe="
+                f"{event_data_dto.time_frame} and "
+                f"event_data_dto={event_data_dto}")
+        else:
+            default_log.debug(
+                f"[BEYOND EXTENSION] An error has occurred while placing MARKET order for symbol={symbol} "
+                f"having timeframe={event_data_dto.time_frame} and "
+                f"event_data_dto={event_data_dto}")
         return event_data_dto, True
 
     event_data_dto.entry_trade_order_id = entry_trade_order_id
 
-    default_log.debug(f"[{signal_type.name}] Signal Trade order placed for symbol={symbol} at {candle_data['time']} "
-                      f"signal_trade_order_id={entry_trade_order_id} "
-                      f"and indices_symbol={indices_symbol}")
+    if not extra_extension:
+        default_log.debug(f"[{signal_type.name}] Signal Trade order placed for symbol={symbol} at {candle_data['time']} "
+                          f"signal_trade_order_id={entry_trade_order_id} "
+                          f"and indices_symbol={indices_symbol}")
+    else:
+        default_log.debug(
+            f"[BEYOND EXTENSION] [{signal_type.name}] Signal Trade order placed for symbol={symbol} at "
+            f"{candle_data['time']} signal_trade_order_id={entry_trade_order_id} "
+            f"and indices_symbol={indices_symbol}")
 
     while True:
         zerodha_order_status = get_status_of_zerodha_order(kite, entry_trade_order_id)
-        default_log.debug(f"Zerodha order status for MARKET order having id={entry_trade_order_id} is "
+        default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                          f"Zerodha order status for MARKET order having id={entry_trade_order_id} is "
                           f"{zerodha_order_status} for symbol={symbol} and "
                           f"indices_symbol={indices_symbol}")
 
@@ -1473,13 +1509,15 @@ def place_initial_zerodha_trades(
             zerodha_market_order_details = get_zerodha_order_details(kite, entry_trade_order_id)
 
             if zerodha_market_order_details is None:
-                default_log.debug(f"An error occurred while fetching Zerodha MARKET order details for "
+                default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                                  f"An error occurred while fetching Zerodha MARKET order details for "
                                   f"id={entry_trade_order_id} for symbol={symbol} and "
                                   f"indices_symbol={indices_symbol}")
                 return event_data_dto, True
 
             fill_price = zerodha_market_order_details['average_price']
-            default_log.debug(f"Fill price of zerodha market order having id={entry_trade_order_id} is "
+            default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                              f"Fill price of zerodha market order having id={entry_trade_order_id} is "
                               f"fill_price={fill_price} for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
 
@@ -1489,13 +1527,15 @@ def place_initial_zerodha_trades(
             # tp_direction = 1 if signal_type == SignalType.BUY else -1  # +1 if tp order is SELL and -1 if tp is BUY
             take_profit_updated = fill_price + greatest_price
 
-            default_log.debug(f"Updating old TP value={old_take_profit} to {take_profit_updated} for "
+            default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                              f"Updating old TP value={old_take_profit} to {take_profit_updated} for "
                               f"MARKET order id={entry_trade_order_id} for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
 
             take_profit_with_buffer = take_profit_updated - (take_profit_updated * buffer_for_tp_trade)
 
-            default_log.debug(f"Updating old TP (by adding/subtracting buffer of [{buffer_for_tp_trade}]) "
+            default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                              f"Updating old TP (by adding/subtracting buffer of [{buffer_for_tp_trade}]) "
                               f"value={take_profit_updated} to {take_profit_with_buffer} for "
                               f"MARKET order id={entry_trade_order_id} for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
@@ -1507,7 +1547,8 @@ def place_initial_zerodha_trades(
             # Now update entry price
             old_entry_price = event_data_dto.entry_price
             new_entry_price = fill_price
-            default_log.debug(f"Updating old Entry Price of={old_entry_price} to {new_entry_price} "
+            default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                              f"Updating old Entry Price of={old_entry_price} to {new_entry_price} "
                               f"for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
             event_data_dto.entry_price = new_entry_price
@@ -1516,7 +1557,8 @@ def place_initial_zerodha_trades(
                 old_sl_value = event_data_dto.sl_value
                 new_sl_value = event_data_dto.entry_price + event_data_dto.value_to_add_for_stop_loss_entry_price
 
-                default_log.debug(f"Updating old SL Value of={old_sl_value} to {new_sl_value} "
+                default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                                  f"Updating old SL Value of={old_sl_value} to {new_sl_value} "
                                   f"for symbol={symbol} and "
                                   f"indices_symbol={indices_symbol}")
                 event_data_dto.sl_value = new_sl_value
@@ -1524,18 +1566,21 @@ def place_initial_zerodha_trades(
             break
 
         if zerodha_order_status == "REJECTED":
-            default_log.debug(f"MARKET Order has been REJECTED having id={entry_trade_order_id} "
+            default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                              f"MARKET Order has been REJECTED having id={entry_trade_order_id} "
                               f"for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
             return event_data_dto, True
         tm.sleep(2)  # sleep for 2 seconds
 
-    default_log.debug(f"Adding buffer of {event_data_dto.candle_length} to the stop loss ({event_data_dto.sl_value}) ="
+    default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                      f"Adding buffer of {event_data_dto.candle_length} to the stop loss ({event_data_dto.sl_value}) ="
                       f" {event_data_dto.sl_value + event_data_dto.candle_length}")
     stop_loss = event_data_dto.sl_value + event_data_dto.candle_length
 
     take_profit = event_data_dto.tp_values[-1].tp_with_buffer
     default_log.debug(
+        f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
         f"Entering the Market with stop_loss_value={stop_loss} and take_profit_value={take_profit} "
         f"and quantity={trade1_quantity} for symbol={symbol} and indices_symbol={indices_symbol}")
 
@@ -1549,7 +1594,8 @@ def place_initial_zerodha_trades(
     )
     stop_loss = formatted_value
 
-    default_log.debug(f"Formatted SL value for symbol={event_data_dto.symbol} and timeframe = "
+    default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                      f"Formatted SL value for symbol={event_data_dto.symbol} and timeframe = "
                       f"{event_data_dto.time_frame} is {stop_loss}")
 
     # event_data_dto.sl_value = stop_loss
@@ -1567,7 +1613,8 @@ def place_initial_zerodha_trades(
     # event_data_dto.tp_values[-1].tp_value = take_profit  # commented out as tp value should not be updated
 
     # Continue with creating a TP and SL trade
-    default_log.debug(f"Placing SL order for entry_trade_order_id={entry_trade_order_id} for "
+    default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                      f"Placing SL order for entry_trade_order_id={entry_trade_order_id} for "
                       f"trading_symbol={symbol}, transaction_type as {sl_transaction_type} "
                       f"with quantity={trade1_quantity} and stop_loss={stop_loss} ")
 
@@ -1593,12 +1640,14 @@ def place_initial_zerodha_trades(
         )
 
     if sl_order_id is None:
-        default_log.debug(f"An error occurred while placing SL order for "
+        default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                          f"An error occurred while placing SL order for "
                           f"trading_symbol={symbol}, transaction_type as {sl_transaction_type} "
                           f"with quantity={trade1_quantity} and stop_loss={stop_loss} and "
                           f"indices_symbol={indices_symbol} ")
     else:
-        default_log.debug(f"Placed SL order with id={sl_order_id} "
+        default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                          f"Placed SL order with id={sl_order_id} "
                           f"for entry_trade_order_id={entry_trade_order_id} for "
                           f"trading_symbol={symbol}, transaction_type as {sl_transaction_type} "
                           f"with quantity={trade1_quantity} and stop_loss={stop_loss} "
@@ -1631,11 +1680,13 @@ def place_initial_zerodha_trades(
         )
 
     if tp_order_id is None:
-        default_log.debug(f"An error occurred while placing TP order for "
+        default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                          f"An error occurred while placing TP order for "
                           f"trading_symbol={symbol}, transaction_type as {tp_transaction_type} "
                           f"with quantity={trade1_quantity} and stop_loss={stop_loss} ")
     else:
-        default_log.debug(f"Placed TP order with id={sl_order_id} "
+        default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
+                          f"Placed TP order with id={sl_order_id} "
                           f"for entry_trade_order_id={entry_trade_order_id} for "
                           f"trading_symbol={symbol}, transaction_type as {tp_transaction_type} "
                           f"with quantity={trade1_quantity} and stop_loss={stop_loss} "
@@ -1684,8 +1735,8 @@ def place_extension_zerodha_trades(
             kite=kite,
             trading_symbol=symbol if indices_symbol is None else indices_symbol,
             transaction_type=signal_type,
-            quantity=extension_quantity if indices_symbol is None else 50,
-            exchange="NSE" if indices_symbol is None else "NFO",
+            quantity=extension_quantity,
+            exchange="NSE",
             average_price=average_price
         )
     else:
@@ -1693,8 +1744,8 @@ def place_extension_zerodha_trades(
             kite=kite,
             trading_symbol=symbol if indices_symbol is None else indices_symbol,
             transaction_type=signal_type,
-            quantity=extension_quantity if indices_symbol is None else 50,
-            exchange="NSE" if indices_symbol is None else "NFO"
+            quantity=extension_quantity,
+            exchange="NSE"
         )
 
     # Todo: calculate the quantity for the extension tp and sl order update
@@ -2003,10 +2054,14 @@ def start_market_logging_for_buy(
         time_frame = restart_dto.time_frame
 
         event2_breakpoint = restart_dto.event2_breakpoint
+
+        highest_point = restart_dto.highest_point
         lowest_point = restart_dto.lowest_point
+
         sl_value = restart_dto.sl_value
         candle_high = restart_dto.candle_high
         candle_low = restart_dto.candle_low
+        candle_length = candle_high - candle_low
         adjusted_high = restart_dto.adjusted_high
         adjusted_low = restart_dto.adjusted_low
 
@@ -2026,6 +2081,7 @@ def start_market_logging_for_buy(
             data = get_zerodha_data(
                 from_date=event1_occur_time,
                 instrument_token=instrument_token,
+                market_symbol=symbol,
                 interval=interval,
                 is_restart=True
             )
@@ -2036,16 +2092,24 @@ def start_market_logging_for_buy(
                 time_frame=time_frame,
                 event1_candle_high=candle_high,
                 event1_candle_low=candle_low,
+                candle_length=candle_length,
+                event2_occur_breakpoint=event2_breakpoint,
                 adjusted_high=adjusted_high,
                 adjusted_low=adjusted_low,
             )
-
-            data_dictionary[key] = event_details_dto
 
             if data is None:
                 default_log.debug(f"No data received from ZERODHA for symbol={symbol}, datetime={event1_occur_time} "
                                   f"and timeframe={timeframe}")
                 return None
+
+            # event1_candle_high = data.iloc[-1]["high"]
+            # event1_candle_low = data.iloc[-1]["low"]
+
+            # event_details_dto.event1_candle_high = event1_candle_high
+            # event_details_dto.event1_candle_low = event1_candle_low
+
+            data_dictionary[key] = event_details_dto
 
         elif (event1_occur_time is not None) and (event2_occur_time is not None) and (event3_occur_time is None):
             # Event 2 has been completed but not event 3
@@ -2058,9 +2122,11 @@ def start_market_logging_for_buy(
                 symbol=symbol,
                 time_frame=time_frame,
                 event1_candle_low=candle_low,
+                candle_length=candle_length,
                 event1_occur_time=event1_occur_time,
                 event2_breakpoint=event2_breakpoint,
                 event2_occur_time=event2_occur_time,
+                highest_point=highest_point,
                 lowest_point=lowest_point,
                 sl_value=sl_value
             )
@@ -2070,6 +2136,7 @@ def start_market_logging_for_buy(
             # Fetch the data
             data = get_zerodha_data(
                 from_date=event2_occur_time,
+                market_symbol=symbol,
                 instrument_token=instrument_token,
                 interval=interval,
                 is_restart=True
@@ -2091,6 +2158,7 @@ def start_market_logging_for_buy(
             data = get_zerodha_data(
                 from_date=event3_occur_time,
                 instrument_token=instrument_token,
+                market_symbol=symbol,
                 interval=interval,
                 is_restart=True
             )
@@ -2116,10 +2184,12 @@ def start_market_logging_for_buy(
                 time_frame=time_frame,
                 event1_candle_high=candle_high,
                 event1_candle_low=candle_low,
+                candle_length=candle_length,
                 event1_occur_time=event1_occur_time,
                 event2_breakpoint=event2_breakpoint,
                 event2_occur_time=event2_occur_time,
                 event3_occur_time=event3_occur_time,
+                highest_point=highest_point,
                 lowest_point=lowest_point,
                 high_1=high_1,
                 tp_values=[tp_details],
@@ -2148,8 +2218,9 @@ def start_market_logging_for_buy(
                 trades_made = 1
 
             # Start checking the status of the TP and SL order
-            thread = threading.Thread(target=update_tp_and_sl_status, args=(event_details_dto, data_dictionary))
-            thread.start()
+            if tp_order_id is not None or sl_order_id is not None:
+                thread = threading.Thread(target=update_tp_and_sl_status, args=(event_details_dto, data_dictionary))
+                thread.start()
     else:
         # Not restarted flow
         tm.sleep(wait_time)
@@ -2158,6 +2229,7 @@ def start_market_logging_for_buy(
         # Fetch candle data
         data = get_zerodha_data(
             instrument_token=instrument_token,
+            market_symbol=symbol,
             from_date=current_time,
             interval=interval
         )
@@ -2203,6 +2275,7 @@ def start_market_logging_for_buy(
 
     tried_creating_entry_order = False
     tried_creating_extension1_order = False
+    tried_creating_extension2_order = False
 
     indices_quantity_multiplier = 50 if symbol == "NIFTY" else 45
 
@@ -2212,41 +2285,42 @@ def start_market_logging_for_buy(
             prev_timestamp = timestamp
 
         # TODO: comment this
-        if not use_current_candle and not is_restart:
-            if current_time is None:
-                current_time = data.iloc[-1]["time"]
+        if not is_restart:
+            if not use_current_candle and not is_restart:
+                if current_time is None:
+                    current_time = data.iloc[-1]["time"]
 
-            next_time = data.iloc[-1]["time"]
-            if next_time.minute <= current_time.minute:
-                data = get_next_data(
-                    is_restart=is_restart,
-                    timeframe=timeframe,
-                    instrument_token=instrument_token,
-                    interval=interval,
-                    from_timestamp=data.iloc[-1]["time"]
-                )
+                next_time = data.iloc[-1]["time"]
+                if next_time.minute <= current_time.minute:
+                    data = get_next_data(
+                        is_restart=is_restart,
+                        timeframe=timeframe,
+                        instrument_token=instrument_token,
+                        interval=interval,
+                        from_timestamp=data.iloc[-1]["time"]
+                    )
 
-                if data is None:
-                    default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                      f"and timeframe={timeframe}")
-                    break
-                continue
-            else:
-                use_current_candle = True
+                    if data is None:
+                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+                                          f"and timeframe={timeframe}")
+                        break
+                    continue
+                else:
+                    use_current_candle = True
 
-                data = get_next_data(
-                    is_restart=is_restart,
-                    timeframe=timeframe,
-                    instrument_token=instrument_token,
-                    interval=interval,
-                    from_timestamp=data.iloc[-1]["time"]
-                )
+                    data = get_next_data(
+                        is_restart=is_restart,
+                        timeframe=timeframe,
+                        instrument_token=instrument_token,
+                        interval=interval,
+                        from_timestamp=data.iloc[-1]["time"]
+                    )
 
-                if data is None:
-                    default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                      f"and timeframe={timeframe}")
-                    break
-                continue
+                    if data is None:
+                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+                                          f"and timeframe={timeframe}")
+                        break
+                    continue
 
         dto, data_dictionary = trade_logic_sell(symbol, timeframe, data.iloc[-1], data_dictionary)
         dto.current_candle_low = data.iloc[-1]["low"]
@@ -2298,35 +2372,47 @@ def start_market_logging_for_buy(
                 continue
 
         # todo: uncomment
-        if candles_checked > no_of_candles_to_consider:
-            if (dto.event2_occur_time is None) and (dto.event3_occur_time is None):
-                data_not_found = True
-                break
-            elif (dto.event2_occur_time is not None) \
-                    and (dto.event3_occur_time is None):
-                data_not_found = True
-                break
-            else:
-                candles_checked = 0
-        else:
-            if prev_timestamp.hour < timestamp.hour or \
-                    (prev_timestamp.hour == timestamp.hour and
-                     prev_timestamp.minute <= timestamp.minute):
-                default_log.debug(f"Previous Timestamp ({prev_timestamp}) is earlier than Current Timestamp "
-                                  f"({timestamp}) for symbol={dto.symbol} and "
-                                  f"time_frame={dto.time_frame}")
-
-                if prev_timestamp.hour == timestamp.hour:
-                    time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
+        if dto.event3_occur_time is None:
+            if candles_checked > no_of_candles_to_consider:
+                if (dto.event2_occur_time is None) and (dto.event3_occur_time is None):
+                    default_log.debug(f"Event 2 not occurred for symbol={symbol} having timeframe={timeframe} "
+                                      f"as checked {no_of_candles_to_consider} candles for the event 2 so stopping "
+                                      f"tracking of further events")
+                    data_not_found = True
+                    break
+                elif (dto.event2_occur_time is not None) \
+                        and (dto.event3_occur_time is None):
+                    default_log.debug(f"Event 3 not occurred for symbol={symbol} having timeframe={timeframe} "
+                                      f"as checked {no_of_candles_to_consider} candles after event 2"
+                                      f"for the event 3 so stopping tracking of further events")
+                    data_not_found = True
+                    break
                 else:
-                    time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
-
-                if time_difference == int(timeframe):
-                    prev_timestamp = timestamp
-                    candles_checked += 1
+                    candles_checked = 0
             else:
-                candles_checked += 1
-                prev_timestamp = timestamp
+                default_log.debug(f"Candles Checked ({candles_checked}) is not greater than No of candle to "
+                                  f"consider ({no_of_candles_to_consider})")
+                if prev_timestamp.hour < timestamp.hour or \
+                        (prev_timestamp.hour == timestamp.hour and
+                         prev_timestamp.minute <= timestamp.minute):
+                    default_log.debug(f"Previous Timestamp ({prev_timestamp}) is earlier than Current Timestamp "
+                                      f"({timestamp}) for symbol={dto.symbol} and "
+                                      f"time_frame={dto.time_frame}")
+
+                    if prev_timestamp.hour == timestamp.hour:
+                        time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
+                    else:
+                        time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
+
+                    if time_difference >= int(timeframe):
+                        default_log.debug(f"Time difference ({time_difference}) == Timeframe ({int(timeframe)})")
+                        prev_timestamp = timestamp
+                        candles_checked += 1
+                else:
+                    default_log.debug(f"Previous Timestamp ({prev_timestamp}) is not earlier than "
+                                      f"Current Timestamp ({timestamp}) for symbol={symbol} and time_frame={timeframe}")
+                    candles_checked += 1
+                    prev_timestamp = timestamp
 
         if (dto.event2_occur_time is not None) and (dto.event3_occur_time is not None):
 
@@ -2410,6 +2496,9 @@ def start_market_logging_for_buy(
                     entry_price = dto.entry_price
                     loss_percent = loss_budget * trade1_loss_percent
 
+                    default_log.debug(f"[For indices_symbol={indices_symbol}] Entry Price={entry_price} and "
+                                      f"Entry SL value={entry_sl_value}")
+
                     trade1_quantity = loss_percent / abs(entry_price - entry_sl_value)
                     trade1_quantity = int(round(trade1_quantity, 0))
 
@@ -2450,6 +2539,8 @@ def start_market_logging_for_buy(
                                 f"with quantity={quantity} with signal_type={SignalType.SELL}")
                         else:
                             dto.entry_trade_order_id = entry_trade_order_id
+                            dto.tp_order_status = 'OPEN'
+                            dto.sl_order_status = 'OPEN'
 
                         dto.trade1_quantity = quantity
 
@@ -2480,6 +2571,7 @@ def start_market_logging_for_buy(
                         dto.tp_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
                         dto.tp_hit = True
                         data_not_found = False
+                        dto.tp_order_status = 'COMPLETE'
                         break
 
                     # Check SL hit or not
@@ -2504,6 +2596,7 @@ def start_market_logging_for_buy(
                         dto.sl_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
                         dto.sl_hit = True
                         data_not_found = False
+                        dto.sl_order_status = 'COMPLETE'
                         break
 
             default_log.debug(f"Storing SL value of symbol={symbol}, timeframe={timeframe}, "
@@ -2674,7 +2767,7 @@ def start_market_logging_for_buy(
 
                 if dto.extension2_trade_order_id is not None:
                     average_entry_price = (
-                                                      dto.entry_price + dto.extension1_entry_price + dto.extension2_entry_price) / 3
+                                                  dto.entry_price + dto.extension1_entry_price + dto.extension2_entry_price) / 3
 
                 current_candle_close = data.iloc[-1]["close"]
 
@@ -2740,6 +2833,7 @@ def start_market_logging_for_buy(
                             f"Entry Price Difference ({entry_price_difference})")
 
                         if entry_price_difference >= threshold:
+                            tried_creating_extension2_order = True
                             default_log.debug(
                                 f"[EXTENSION] Creating EXTENSION trade as Entry Price = {dto.entry_price} "
                                 f"and SL value = {dto.sl_value} and candle_high_price={candle_high_price} "
@@ -2777,7 +2871,6 @@ def start_market_logging_for_buy(
                                         f"indices_symbol={indices_symbol} and timeframe={timeframe} as "
                                         f"the total_quantity ({total_quantity}) is not divisible by "
                                         f"indices_quantity_multiplier ({indices_quantity_multiplier})")
-                                    break
 
                                 default_log.debug(f"Creating EXTENSION 2 indices MARKET order with "
                                                   f"quantity={total_quantity} for "
@@ -2788,8 +2881,6 @@ def start_market_logging_for_buy(
 
                                 extension2_quantity = total_quantity
 
-                                # TODO: Remove this quantity line
-                                # extension2_quantity = 50 if symbol == "NIFTY" else 45
                                 extension_quantity_for_indices_symbol = dto.extension_quantity + extension2_quantity
 
                                 extension_order_id = place_indices_market_order(
@@ -2800,8 +2891,8 @@ def start_market_logging_for_buy(
 
                                 if extension_order_id is None:
                                     default_log.debug(
-                                        f"An error occurred while placing EXTENSION MARKET order for symbol={indices_symbol} and "
-                                        f"and event_data_dto={dto} and "
+                                        f"An error occurred while placing EXTENSION MARKET order for "
+                                        f"symbol={indices_symbol} and event_data_dto={dto} and "
                                         f"extension_quantity={extension_quantity_for_indices_symbol} "
                                         f"and trade1_quantity={dto.trade1_quantity} and "
                                         f"extension2_quantity={extension2_quantity}")
@@ -2811,6 +2902,8 @@ def start_market_logging_for_buy(
                                 dto.extension2_trade_order_id = extension_order_id
                                 dto.extension_quantity = extension_quantity_for_indices_symbol
                                 dto.extension2_quantity = extension2_quantity
+                                dto.tp_order_status = 'OPEN'
+                                dto.sl_order_status = 'OPEN'
                                 trades_made += 1
                             else:
                                 event_data_dto, error_occurred = place_extension_zerodha_trades(
@@ -2851,6 +2944,7 @@ def start_market_logging_for_buy(
                             f"Entry Price Difference ({entry_price_difference})")
 
                         if (entry_price_difference >= threshold) and not tried_creating_extension1_order:
+                            tried_creating_extension1_order = True
                             default_log.debug(
                                 f"[EXTENSION] Creating EXTENSION trade as Entry Price = {dto.entry_price} "
                                 f"and SL value = {dto.sl_value} and candle_high_price={candle_high_price} "
@@ -2890,8 +2984,6 @@ def start_market_logging_for_buy(
                                         f"indices_quantity_multiplier ({indices_quantity_multiplier}). "
                                         f"Also extension 2 trade won't be made as make_extension2_trade="
                                         f"{make_extension2_trade}")
-                                    tried_creating_extension1_order = True
-                                    break
 
                                 default_log.debug(f"Creating EXTENSION indices MARKET order with quantity=50 for "
                                                   f"indices_symbol={indices_symbol} and time_frame={timeframe}")
@@ -2899,8 +2991,6 @@ def start_market_logging_for_buy(
                                 dto.extension_quantity = dto.trade1_quantity
                                 extension1_quantity = total_quantity
 
-                                # TODO: comment this line out
-                                # extension1_quantity = 50 if symbol == "NIFTY" else 45
                                 extension_quantity_for_indices_symbol = dto.extension_quantity + extension1_quantity
 
                                 extension_order_id = place_indices_market_order(
@@ -2919,6 +3009,8 @@ def start_market_logging_for_buy(
                                         f"extension_quantity={extension_quantity} and trade1_quantity={dto.trade1_quantity}")
                                 else:
                                     dto.extension1_trade_order_id = extension_order_id
+                                    dto.tp_order_status = 'OPEN'
+                                    dto.sl_order_status = 'OPEN'
 
                                 dto.extension_quantity = extension_quantity_for_indices_symbol
                                 dto.extension1_quantity = extension1_quantity
@@ -2948,7 +3040,73 @@ def start_market_logging_for_buy(
                                               f"condition is {trades_details_dto.trades_to_make.extension1_trade}. "
                                               f"Entry Price Difference={entry_price_difference} and "
                                               f"Threshold={threshold}")
+            else:
+                default_log.debug(f"[EXTENSION] Not placing EXTENSION trade as tp_order_status={dto.tp_order_status} "
+                                  f"sl_order_status={dto.sl_order_status} trades_made={trades_made} and "
+                                  f"maximum_trades_to_make={maximum_trades_to_make} Make Extension 1 trade status="
+                                  f"{trades_details_dto.trades_to_make.extension1_trade} Make Extension 2 trade "
+                                  f"status={trades_details_dto.trades_to_make.extension2_trade} and extension_diff="
+                                  f"{extension_diff}")
 
+            # Check if tried creating market order, extension1 order and extension2 order. If yes then create a MARKET
+            # order with only SL-M order and no LIMIT order
+            if (tried_creating_entry_order and tried_creating_extension1_order and tried_creating_extension2_order) \
+                and (dto.entry_trade_order_id is None and dto.extension1_trade_order_id is None and
+                     dto.extension2_trade_order_id is None):
+                default_log.debug(f"For symbol={symbol} having timeframe={timeframe} there has been a attempt to "
+                                  f"create entry order (as tried_creating_entry_order={tried_creating_entry_order}) "
+                                  f"and to create extension1_order (as tried_creating_extension1_order="
+                                  f"{tried_creating_extension1_order}) and to create extension2_order (as "
+                                  f"tried_creating_extension2_order={tried_creating_extension2_order}). But Failed to "
+                                  f"create these orders as Entry Trade order id={dto.entry_trade_order_id}, "
+                                  f"Extension 1 order id={dto.extension1_trade_order_id} and Extension 2 order id="
+                                  f"{dto.extension2_trade_order_id}. So will create a MARKET order and SL-M order only "
+                                  f"with stop_loss={dto.sl_value} with quantity={dto.extension_quantity}")
+
+                if indices_symbol is not None:
+                    # Place only MARKET order
+                    extension_indices_market_order_id = place_indices_market_order(
+                        indice_symbol=indices_symbol,
+                        quantity=dto.extension_quantity,
+                        signal_type=SignalType.BUY,
+                        entry_price=dto.entry_price
+                    )
+
+                    if extension_indices_market_order_id is None:
+                        default_log.debug(f"[BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
+                                          f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
+                        break
+
+                    default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
+                                      f"id={extension_indices_market_order_id} for symbol={symbol} having time_frame="
+                                      f"{timeframe} with quantity={dto.extension_quantity}")
+
+                    dto.entry_trade_order_id = extension_indices_market_order_id
+                else:
+                    event_data_dto, error_occurred = place_initial_zerodha_trades(
+                        event_data_dto=dto,
+                        data_dictionary=data_dictionary,
+                        signal_type=SignalType.BUY,
+                        candle_data=data.iloc[-1],
+                        symbol=symbol,
+                        loss_budget=0,
+                        indices_symbol=indices_symbol,
+                        extra_extension=True
+                    )
+
+                    if error_occurred:
+                        default_log.debug(f"[BEYOND EXTENSION] Error occurred while placing Extra Extension Order for "
+                                          f"symbol={symbol} having timeframe={dto.time_frame} with "
+                                          f"quantity={dto.extension_quantity} and stop_loss={dto.sl_value}")
+                        break
+
+                    default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
+                                      f"id={event_data_dto.entry_trade_order_id} for symbol={symbol} having "
+                                      f"time_frame={timeframe} with quantity={dto.extension_quantity}")
+
+                    dto = event_data_dto
+
+        data_dictionary[key] = dto
         default_log.debug(f"[{data['time']}] Event Details: {data_dictionary.get(key, None)}")
 
         # Store the current state of event in the database
@@ -2991,7 +3149,13 @@ def start_market_logging_for_buy(
             return False
 
         if (dto.sl_order_status == "COMPLETE") or (dto.tp_order_status == "COMPLETE"):
-            default_log.debug(f"TP/SL HIT")
+            default_log.debug(f"TP/SL HIT for symbol={symbol} and timeframe={timeframe}")
+            break
+
+        # When server is stopped and all orders are CANCELLED
+        if (dto.sl_order_status == "CANCELLED") and (dto.tp_order_status == "CANCELLED"):
+            default_log.debug(f"The TP and SL order has been CANCELLED for symbol={symbol} and time_frame={timeframe} "
+                              f"TP order status={dto.tp_order_status} and SL order status={dto.sl_order_status}")
             break
 
         data = get_next_data(
@@ -3101,10 +3265,16 @@ def start_market_logging_for_sell(
         time_frame = restart_dto.time_frame
 
         event2_breakpoint = restart_dto.event2_breakpoint
+
         highest_point = restart_dto.highest_point
+        lowest_point = restart_dto.lowest_point
+
         sl_value = restart_dto.sl_value
+
         candle_high = restart_dto.candle_high
         candle_low = restart_dto.candle_low
+        candle_length = candle_high - candle_low
+
         adjusted_high = restart_dto.adjusted_high
         adjusted_low = restart_dto.adjusted_low
 
@@ -3128,6 +3298,8 @@ def start_market_logging_for_sell(
                 time_frame=time_frame,
                 event1_candle_high=candle_high,
                 event1_candle_low=candle_low,
+                candle_length=candle_length,
+                event2_occur_breakpoint=event2_breakpoint,
                 adjusted_high=adjusted_high,
                 adjusted_low=adjusted_low,
             )
@@ -3137,6 +3309,7 @@ def start_market_logging_for_sell(
             data = get_zerodha_data(
                 from_date=event1_occur_time,
                 instrument_token=instrument_token,
+                market_symbol=symbol,
                 interval=interval,
                 is_restart=True
             )
@@ -3157,19 +3330,20 @@ def start_market_logging_for_sell(
                 time_frame=time_frame,
                 event1_candle_high=candle_high,
                 event1_candle_low=candle_low,
+                candle_length=candle_length,
                 event1_occur_time=event1_occur_time,
                 event2_breakpoint=event2_breakpoint,
                 event2_occur_time=event2_occur_time,
                 highest_point=highest_point,
+                lowest_point=lowest_point,
                 sl_value=sl_value
             )
-
-            data_dictionary[key] = event_details_dto
 
             # Fetch the data
             data = get_zerodha_data(
                 from_date=event2_occur_time,
                 instrument_token=instrument_token,
+                market_symbol=symbol,
                 interval=interval,
                 is_restart=True
             )
@@ -3179,6 +3353,13 @@ def start_market_logging_for_sell(
                                   f"and timeframe={timeframe}")
                 return None
 
+            # event1_candle_high = data.iloc[-1]["high"]
+            # event1_candle_low = data.iloc[-1]["low"]
+            #
+            # event_details_dto.event1_candle_high = event1_candle_high
+            # event_details_dto.event1_candle_low = event1_candle_low
+
+            data_dictionary[key] = event_details_dto
         else:
             # Event 3 has been completed but tp or sl has not been hit yet Start the thread from event 3 timestamp
             # Provide the following: EVENT1_OCCUR_TIME, LOWEST_POINT, SL_VALUE, EVENT2_BREAKPOINT, EVENT2_OCCUR_TIME,
@@ -3190,6 +3371,7 @@ def start_market_logging_for_sell(
             data = get_zerodha_data(
                 from_date=event3_occur_time,
                 instrument_token=instrument_token,
+                market_symbol=symbol,
                 interval=interval,
                 is_restart=True
             )
@@ -3215,11 +3397,13 @@ def start_market_logging_for_sell(
                 time_frame=time_frame,
                 event1_candle_high=candle_high,
                 event1_candle_low=candle_low,
+                candle_length=candle_length,
                 event1_occur_time=event1_occur_time,
                 event2_breakpoint=event2_breakpoint,
                 event2_occur_time=event2_occur_time,
                 event3_occur_time=event3_occur_time,
                 highest_point=highest_point,
+                lowest_point=lowest_point,
                 sl_value=sl_value,
                 tp_values=[tp_details],
                 low_1=low_1,
@@ -3247,8 +3431,9 @@ def start_market_logging_for_sell(
                 trades_made = 1
 
             # Start checking the status of the TP and SL order
-            thread = threading.Thread(target=update_tp_and_sl_status, args=(event_details_dto, data_dictionary))
-            thread.start()
+            if tp_order_id is not None or sl_order_id is not None:
+                thread = threading.Thread(target=update_tp_and_sl_status, args=(event_details_dto, data_dictionary))
+                thread.start()
     else:
         # Non restart flow
         tm.sleep(wait_time)
@@ -3257,6 +3442,7 @@ def start_market_logging_for_sell(
         # Fetch candle data
         data = get_zerodha_data(
             instrument_token=instrument_token,
+            market_symbol=symbol,
             from_date=current_time,
             interval=interval
         )
@@ -3300,6 +3486,7 @@ def start_market_logging_for_sell(
 
     tried_creating_entry_order = False
     tried_creating_extension1_order = False
+    tried_creating_extension2_order = False
 
     indices_quantity_multiplier = 50 if symbol == "NIFTY" else 45
 
@@ -3309,41 +3496,42 @@ def start_market_logging_for_sell(
             prev_timestamp = timestamp
 
         # TODO: comment this
-        if not use_current_candle and not is_restart:
-            if temp_current_time is None:
-                temp_current_time = data.iloc[-1]["time"]
+        if not is_restart:
+            if not use_current_candle and not is_restart:
+                if temp_current_time is None:
+                    temp_current_time = data.iloc[-1]["time"]
 
-            next_time = data.iloc[-1]["time"]
-            if next_time.minute <= temp_current_time.minute:
-                data = get_next_data(
-                    is_restart=is_restart,
-                    timeframe=timeframe,
-                    instrument_token=instrument_token,
-                    interval=interval,
-                    from_timestamp=data.iloc[-1]["time"]
-                )
+                next_time = data.iloc[-1]["time"]
+                if next_time.minute <= temp_current_time.minute:
+                    data = get_next_data(
+                        is_restart=is_restart,
+                        timeframe=timeframe,
+                        instrument_token=instrument_token,
+                        interval=interval,
+                        from_timestamp=data.iloc[-1]["time"]
+                    )
 
-                if data is None:
-                    default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                      f"and timeframe={timeframe}")
-                    break
-                continue
-            else:
-                use_current_candle = True
+                    if data is None:
+                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+                                          f"and timeframe={timeframe}")
+                        break
+                    continue
+                else:
+                    use_current_candle = True
 
-                data = get_next_data(
-                    is_restart=is_restart,
-                    timeframe=timeframe,
-                    instrument_token=instrument_token,
-                    interval=interval,
-                    from_timestamp=data.iloc[-1]["time"]
-                )
+                    data = get_next_data(
+                        is_restart=is_restart,
+                        timeframe=timeframe,
+                        instrument_token=instrument_token,
+                        interval=interval,
+                        from_timestamp=data.iloc[-1]["time"]
+                    )
 
-                if data is None:
-                    default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                      f"and timeframe={timeframe}")
-                    break
-                continue
+                    if data is None:
+                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+                                          f"and timeframe={timeframe}")
+                        break
+                    continue
 
         dto, data_dictionary = trade_logic_buy(symbol, timeframe, data.iloc[-1], data_dictionary)
         dto.current_candle_low = data.iloc[-1]["low"]
@@ -3395,35 +3583,47 @@ def start_market_logging_for_sell(
                 continue
 
         # todo: uncomment
-        if candles_checked > no_of_candles_to_consider:
-            if (dto.event2_occur_time is None) and (dto.event3_occur_time is None):
-                data_not_found = True
-                break
-            elif (dto.event2_occur_time is not None) \
-                    and (dto.event3_occur_time is None):
-                data_not_found = True
-                break
-            else:
-                candles_checked = 0
-        else:
-            if prev_timestamp.hour < timestamp.hour or \
-                    (prev_timestamp.hour == timestamp.hour and
-                     prev_timestamp.minute <= timestamp.minute):
-                default_log.debug(f"Previous Timestamp ({prev_timestamp}) is earlier than Current Timestamp "
-                                  f"({timestamp}) for symbol={dto.symbol} and "
-                                  f"time_frame={dto.time_frame}")
-
-                if prev_timestamp.hour == timestamp.hour:
-                    time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
+        if dto.event3_occur_time is None:
+            if candles_checked > no_of_candles_to_consider:
+                if (dto.event2_occur_time is None) and (dto.event3_occur_time is None):
+                    default_log.debug(f"Event 2 not occurred for symbol={symbol} having timeframe={timeframe} "
+                                      f"as checked {no_of_candles_to_consider} candles for the event 2 so stopping "
+                                      f"tracking of further events")
+                    data_not_found = True
+                    break
+                elif (dto.event2_occur_time is not None) \
+                        and (dto.event3_occur_time is None):
+                    default_log.debug(f"Event 3 not occurred for symbol={symbol} having timeframe={timeframe} "
+                                      f"as checked {no_of_candles_to_consider} candles after event 2"
+                                      f"for the event 3 so stopping tracking of further events")
+                    data_not_found = True
+                    break
                 else:
-                    time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
-
-                if time_difference == int(timeframe):
-                    prev_timestamp = timestamp
-                    candles_checked += 1
+                    candles_checked = 0
             else:
-                candles_checked += 1
-                prev_timestamp = timestamp
+                default_log.debug(f"Candles Checked ({candles_checked}) is not greater than No of candle to "
+                                  f"consider ({no_of_candles_to_consider})")
+                if prev_timestamp.hour < timestamp.hour or \
+                        (prev_timestamp.hour == timestamp.hour and
+                         prev_timestamp.minute <= timestamp.minute):
+                    default_log.debug(f"Previous Timestamp ({prev_timestamp}) is earlier than Current Timestamp "
+                                      f"({timestamp}) for symbol={dto.symbol} and "
+                                      f"time_frame={dto.time_frame}")
+
+                    if prev_timestamp.hour == timestamp.hour:
+                        time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
+                    else:
+                        time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
+
+                    if time_difference >= int(timeframe):
+                        default_log.debug(f"Time difference ({time_difference}) == Timeframe ({int(timeframe)})")
+                        prev_timestamp = timestamp
+                        candles_checked += 1
+                else:
+                    default_log.debug(f"Previous Timestamp ({prev_timestamp}) is not earlier than "
+                                      f"Current Timestamp ({timestamp}) for symbol={symbol} and time_frame={timeframe}")
+                    candles_checked += 1
+                    prev_timestamp = timestamp
 
         if (dto.event2_occur_time is not None) and (dto.event3_occur_time is not None):
 
@@ -3502,6 +3702,9 @@ def start_market_logging_for_sell(
                     entry_price = dto.entry_price
                     loss_percent = loss_budget * trade1_loss_percent
 
+                    default_log.debug(f"[For indices_symbol={indices_symbol}] Entry Price={entry_price} and "
+                                      f"Entry SL value={entry_sl_value}")
+
                     trade1_quantity = loss_percent / abs(entry_price - entry_sl_value)
                     trade1_quantity = int(round(trade1_quantity, 0))
 
@@ -3546,6 +3749,9 @@ def start_market_logging_for_sell(
                             tried_creating_entry_order = True
                         else:
                             dto.entry_trade_order_id = entry_trade_order_id
+
+                        dto.tp_order_status = 'OPEN'
+                        dto.sl_order_status = 'OPEN'
                         dto.trade1_quantity = quantity
 
                 if dto.entry_trade_order_id or dto.extension1_trade_order_id or dto.extension2_trade_order_id:
@@ -3574,6 +3780,8 @@ def start_market_logging_for_sell(
 
                         dto.tp_order_id = tp_order_id
                         dto.tp_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
+                        dto.tp_hit = True
+                        dto.tp_order_status = 'COMPLETE'
                         break
 
                     # Check SL-M hit or not
@@ -3597,6 +3805,8 @@ def start_market_logging_for_sell(
 
                         dto.sl_order_id = sl_order_id
                         dto.sl_candle_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
+                        dto.sl_hit = True
+                        dto.sl_order_status = 'COMPLETE'
                         break
 
             default_log.debug(f"Storing SL value of symbol={symbol}, timeframe={timeframe}, "
@@ -3748,7 +3958,7 @@ def start_market_logging_for_sell(
 
                 if dto.extension2_trade_order_id is not None:
                     average_entry_price = (
-                                                      dto.entry_price + dto.extension1_entry_price + dto.extension2_entry_price) / 3
+                                                  dto.entry_price + dto.extension1_entry_price + dto.extension2_entry_price) / 3
 
                 current_candle_close = data.iloc[-1]["close"]
 
@@ -3781,7 +3991,9 @@ def start_market_logging_for_sell(
             # Place extra trade if candle high goes ABOVE by a threshold value
             if (extension_diff is not None) and (trades_made < maximum_trades_to_make) and \
                     ((dto.tp_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])
-                     and (dto.sl_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])):
+                     and (dto.sl_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])) and \
+                    (trades_details_dto.trades_to_make.extension1_trade or
+                     trades_details_dto.trades_to_make.extension2_trade):
 
                 default_log.debug(f"Extension Diff={extension_diff}, trades_made={trades_made}, "
                                   f"TP Order status={dto.tp_order_status} with id={dto.tp_order_id} and "
@@ -3800,6 +4012,7 @@ def start_market_logging_for_sell(
                                   f"current_candle_low={current_candle_low} ")
 
                 if entry_price_difference >= threshold:
+                    tried_creating_extension2_order = True
                     default_log.debug(f"[EXTENSION] Creating EXTENSION trade as Entry Price = {dto.entry_price} "
                                       f"and SL value = {dto.sl_value} "
                                       f"and current_candle_low = {current_candle_low} "
@@ -3848,7 +4061,6 @@ def start_market_logging_for_sell(
                                         f"indices_symbol={indices_symbol} and timeframe={timeframe} as "
                                         f"the total_quantity ({total_quantity}) is not divisible by "
                                         f"indices_quantity_multiplier ({indices_quantity_multiplier})")
-                                    break
 
                                 default_log.debug(f"Creating EXTENSION indices MARKET order with quantity=50 for "
                                                   f"indices_symbol={indices_symbol} and time_frame={timeframe}")
@@ -3878,6 +4090,8 @@ def start_market_logging_for_sell(
                                     return None
                                 else:
                                     dto.extension2_trade_order_id = extension_order_id
+                                    dto.tp_order_status = 'OPEN'
+                                    dto.sl_order_status = 'OPEN'
 
                                 dto.extension2_quantity = extension2_quantity
                                 dto.extension_quantity = extension_quantity_for_indices_symbol
@@ -3928,8 +4142,9 @@ def start_market_logging_for_sell(
 
                                 total_quantity = int(round(total_quantity, 0))
                                 default_log.debug(f"[EXTENSION] Rounding off total_quantity ({total_quantity}) to the "
-                                                  f"indices_quantity_multiplier ({indices_quantity_multiplier}) for symbol={symbol} "
-                                                  f"and indices_symbol={indices_symbol} having time_frame={timeframe}")
+                                                  f"indices_quantity_multiplier ({indices_quantity_multiplier}) "
+                                                  f"for symbol={symbol} and indices_symbol={indices_symbol} "
+                                                  f"having time_frame={timeframe}")
 
                                 total_quantity = round_to_nearest_multiplier(total_quantity,
                                                                              indices_quantity_multiplier)
@@ -3948,7 +4163,6 @@ def start_market_logging_for_sell(
                                         f"indices_quantity_multiplier ({indices_quantity_multiplier}). "
                                         f"Also extension 2 trade won't be made as make_extension2_trade="
                                         f"{make_extension2_trade}")
-                                    break
 
                                 default_log.debug(f"Creating EXTENSION indices MARKET order with quantity=50 for "
                                                   f"indices_symbol={indices_symbol} and time_frame={timeframe}")
@@ -3979,6 +4193,8 @@ def start_market_logging_for_sell(
                                     tried_creating_extension1_order = True
                                 else:
                                     dto.extension1_trade_order_id = extension_order_id
+                                    dto.tp_order_status = 'OPEN'
+                                    dto.sl_order_status = 'OPEN'
 
                                 trades_made += 1
                                 dto.extension1_quantity = extension1_quantity
@@ -4000,9 +4216,10 @@ def start_market_logging_for_sell(
 
                                 if error_occurred:
                                     default_log.debug(
-                                        f"An error occurred while placing EXTENSION MARKET order for symbol={symbol} and "
-                                        f"indices_symbol={indices_symbol} and event_data_dto={dto} and "
-                                        f"extension_quantity={extension_quantity} and trade1_quantity={dto.trade1_quantity}")
+                                        f"An error occurred while placing EXTENSION MARKET order for symbol={symbol} "
+                                        f"and indices_symbol={indices_symbol} and event_data_dto={dto} and "
+                                        f"extension_quantity={extension_quantity} and "
+                                        f"trade1_quantity={dto.trade1_quantity}")
 
                                 dto = event_data_dto
                                 trades_made += 1
@@ -4015,7 +4232,70 @@ def start_market_logging_for_sell(
                         f"trades_made={trades_made}, config_threshold_percent={config_threshold_percent} "
                         f"entry_price={entry_price} and sl_value={dto.sl_value} "
                         f"and entry_price_difference: {entry_price_difference} < threshold: {threshold} "
-                        f"and symbol={symbol} and indices_symbol={indices_symbol} ")
+                        f"and symbol={symbol} and indices_symbol={indices_symbol} and "
+                        f"Make Extension 1 trade={trades_details_dto.trades_to_make.extension1_trade} "
+                        f"and Make Extension 2 trade={trades_details_dto.trades_to_make.extension2_trade} ")
+
+                # Check if tried creating market order, extension1 order and extension2 order. If yes then create a
+                # MARKET order with only SL-M order and no LIMIT order
+                if (tried_creating_entry_order and tried_creating_extension1_order and tried_creating_extension2_order) \
+                        and ((dto.entry_trade_order_id is None) and (dto.extension1_trade_order_id is None) and
+                             (dto.extension2_trade_order_id is None)):
+                    default_log.debug(
+                        f"For symbol={symbol} having timeframe={timeframe} there has been a attempt to "
+                        f"create entry order (as tried_creating_entry_order={tried_creating_entry_order}) "
+                        f"and to create extension1_order (as tried_creating_extension1_order="
+                        f"{tried_creating_extension1_order}) and to create extension2_order (as "
+                        f"tried_creating_extension2_order={tried_creating_extension2_order}). But Failed to "
+                        f"create these orders as Entry Trade order id={dto.entry_trade_order_id}, "
+                        f"Extension 1 order id={dto.extension1_trade_order_id} and Extension 2 order id="
+                        f"{dto.extension2_trade_order_id}. So will create a MARKET order and SL-M order only "
+                        f"with stop_loss={dto.sl_value} with quantity={dto.extension_quantity}")
+
+                    if indices_symbol is not None:
+                        # Place only MARKET order
+                        extension_indices_market_order_id = place_indices_market_order(
+                            indice_symbol=indices_symbol,
+                            quantity=dto.extension_quantity,
+                            signal_type=SignalType.BUY,
+                            entry_price=dto.entry_price
+                        )
+
+                        if extension_indices_market_order_id is None:
+                            default_log.debug(
+                                f"[BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
+                                f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
+                            break
+
+                        default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
+                                          f"id={extension_indices_market_order_id} for symbol={symbol} having "
+                                          f"time_frame={timeframe} with quantity={dto.extension_quantity}")
+
+                        dto.entry_trade_order_id = extension_indices_market_order_id
+                    else:
+                        event_data_dto, error_occurred = place_initial_zerodha_trades(
+                            event_data_dto=dto,
+                            data_dictionary=data_dictionary,
+                            signal_type=SignalType.SELL,
+                            candle_data=data.iloc[-1],
+                            symbol=symbol,
+                            loss_budget=loss_budget,
+                            indices_symbol=indices_symbol,
+                            extra_extension=True
+                        )
+
+                        if error_occurred:
+                            default_log.debug(
+                                f"[BEYOND EXTENSION] Error occurred while placing Extra Extension Order for "
+                                f"symbol={symbol} having timeframe={dto.time_frame} with "
+                                f"quantity={dto.extension_quantity} and stop_loss={dto.sl_value}")
+                            break
+
+                        default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
+                                          f"id={event_data_dto.entry_trade_order_id} for symbol={symbol} having "
+                                          f"time_frame={timeframe} with quantity={dto.extension_quantity}")
+
+                        dto = event_data_dto
 
         default_log.debug(f"[{data.iloc[-1]['time']}] Event Details: {data_dictionary.get(key, None)}")
 
@@ -4057,7 +4337,14 @@ def start_market_logging_for_sell(
             return False
 
         if (dto.sl_order_status == "COMPLETE") or (dto.tp_order_status == "COMPLETE"):
-            default_log.debug(f"TP/SL hit")
+            default_log.debug(f"TP/SL hit for symbol={symbol} having timeframe={timeframe}")
+            break
+
+        # When server is stopped and all orders are CANCELLED
+        if (dto.sl_order_status == "CANCELLED") and (dto.tp_order_status == "CANCELLED"):
+            default_log.debug(
+                f"The TP and SL order has been CANCELLED for symbol={symbol} and time_frame={timeframe} "
+                f"TP order status={dto.tp_order_status} and SL order status={dto.sl_order_status}")
             break
 
         # Fetch next data
@@ -4113,7 +4400,7 @@ def start_market_logging_for_sell(
             return False
 
     if data_not_found:
-        default_log.debug("Data not found for TP/SL hit")
+        default_log.debug("Data not found for TP/SL")
         default_log.debug("Thread completed")
         return False
     else:
@@ -4141,6 +4428,8 @@ def restart_event_threads():
         event2_occur_time = thread_detail.event2_occur_time
         event3_occur_time = thread_detail.event3_occur_time
 
+        event2_breakpoint = thread_detail.event2_breakpoint
+
         market_symbol = thread_detail.symbol
 
         candle_high = thread_detail.signal_candle_high
@@ -4152,14 +4441,21 @@ def restart_event_threads():
         signal_type = thread_detail.signal_type
 
         time_frame = thread_detail.time_frame
-        instrument_token = instrument_tokens_map[market_symbol]
+        instrument_token = instrument_tokens_map.get(market_symbol, None)
+
+        exchange = "NFO" if market_symbol in indices_list else "NSE"
+        if instrument_token is None:
+            instrument_token = get_instrument_token_for_symbol(market_symbol, exchange)
+            default_log.debug(f"instrument token received for symbol={market_symbol} and exchange={exchange}: "
+                              f"{instrument_token}")
+
         configuration_type = thread_detail.configuration_type
 
         signal_trade_order_id = thread_detail.signal_trade_order_id
         tp_order_id = thread_detail.tp_order_id
         sl_order_id = thread_detail.sl_order_id
 
-        trade1_quantity = thread_detail.trade1_quantity,
+        trade1_quantity = thread_detail.trade1_quantity
         entry_price = thread_detail.entry_price
 
         extension_quantity = thread_detail.extension_quantity
@@ -4280,7 +4576,6 @@ def restart_event_threads():
                 highest_point=highest_point,
                 sl_value=sl_value,
                 tp_value=tp_value,
-                trade1_quantity=trade1_quantity,
                 entry_price=entry_price,
                 extension_quantity=extension_quantity,
                 extension1_order_id=extension1_order_id,
@@ -4288,11 +4583,21 @@ def restart_event_threads():
                 signal_trade_order_id=signal_trade_order_id,
                 tp_order_id=tp_order_id,
                 sl_order_id=sl_order_id,
-                extension1_quantity=extension1_quantity,
-                extension2_quantity=extension2_quantity,
                 adjusted_high=thread_detail.adjusted_high,
                 adjusted_low=thread_detail.adjusted_high,
             )
+
+            if trade1_quantity is not None:
+                restart_dto.trade1_quantity = trade1_quantity
+
+            if extension_quantity is not None:
+                restart_dto.extension_quantity = int(extension_quantity)
+
+            if extension1_quantity is not None:
+                restart_dto.extension1_quantity = int(extension1_quantity)
+
+            if extension2_quantity is not None:
+                restart_dto.extension2_quantity = int(extension2_quantity)
 
             if signal_type == SignalType.BUY:
                 thread = threading.Thread(target=start_market_logging_for_buy, args=(

@@ -5,8 +5,9 @@ from starlette.responses import RedirectResponse
 
 from config import default_log, KITE_API_URL, zerodha_api_key, zerodha_api_secret, KITE_API_LOGIN_URL, homepage_url
 from decorators.handle_generic_exception import frontend_api_generic_exception
-from external_services.zerodha.zerodha_orders import store_access_token_of_kiteconnect
-
+from external_services.zerodha.zerodha_orders import store_access_token_of_kiteconnect, \
+    get_access_token_from_request_token
+from standard_responses.standard_json_response import standard_json_response
 
 kite_connect_router = APIRouter(prefix='/kite-connect', tags=['kite-connect'])
 
@@ -22,6 +23,34 @@ def add_symbol_budget_route(request: Request):
     # response = requests.get(other_url)
     # token_data = response.json()
     # return RedirectResponse(other_url)
+
+
+@kite_connect_router.post("/get-access-token")
+@frontend_api_generic_exception
+def get_kiteconnect_access_token_route(
+        request: Request,
+        request_token: str
+):
+    default_log.debug(f"inside /get-access-token with request_token={request_token}")
+
+    access_token = get_access_token_from_request_token(request_token)
+
+    if access_token is None:
+        default_log.debug(f"An error occurred while getting access token from request_token={request_token}")
+        return standard_json_response(
+            error=True,
+            message="An error occurred while getting access token from request_token",
+            data={}
+        )
+
+    default_log.debug(f"Access token received for request_token={request_token} is {access_token}")
+    return standard_json_response(
+        error=False,
+        message="ok",
+        data={
+            'access_token': access_token
+        }
+    )
 
 
 # This route handles the callback from Kite

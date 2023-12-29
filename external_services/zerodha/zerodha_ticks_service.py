@@ -5,7 +5,9 @@ import time
 import pandas as pd
 import threading
 from kiteconnect import KiteTicker
-from config import zerodha_api_key, zerodha_access_token, default_log, instrument_tokens_map, symbol_tokens_map
+from config import zerodha_api_key, zerodha_access_token, default_log, instrument_tokens_map, symbol_tokens_map, \
+    indices_list
+from external_services.zerodha.zerodha_orders import get_instrument_token_for_symbol
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -71,7 +73,12 @@ def prepare_interval_data_for_symbol(interval: str, instrument_symbol: str):
     global symbols_interval_data
     global symbol_ticks
 
-    instrument_token = instrument_tokens_map[instrument_symbol]
+    instrument_token = instrument_tokens_map.get(instrument_symbol, None)
+    exchange = "NFO" if instrument_symbol in indices_list else "NSE"
+    if instrument_token is None:
+        instrument_token = get_instrument_token_for_symbol(instrument_symbol, exchange)
+        default_log.debug(f"instrument token received for symbol={instrument_symbol} and exchange={exchange}: "
+                          f"{instrument_token}")
 
     ticks = symbol_ticks.get(instrument_token, [])
     data = dict()
@@ -131,7 +138,12 @@ def get_candlestick_data_using_ticker(
     global subscribed_tokens
     global websocket_obj
 
-    token = instrument_tokens_map[symbol]
+    token = instrument_tokens_map.get(symbol, None)
+    exchange = "NFO" if symbol in indices_list else "NSE"
+    if token is None:
+        token = get_instrument_token_for_symbol(symbol, exchange)
+        default_log.debug(f"instrument token received for symbol={symbol} and exchange={exchange}: "
+                          f"{token}")
 
     # Check if symbol is subscribed
     if token not in subscribed_tokens:

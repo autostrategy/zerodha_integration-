@@ -252,11 +252,12 @@ def GetHistory(
         instrument_identifier: str,
         from_time_in_epochs: str = None,
         to_time_in_epochs: str = None,
-        time_frame: str = None
+        time_frame: str = None,
+        periodicity: str = "MINUTE"
 ):
     default_log.debug(f"inside GetHistory function with instrument_identifier={instrument_identifier} and "
                       f"from_time_in_epochs={from_time_in_epochs}, to_time_in_epochs={to_time_in_epochs}, "
-                      f"time_frame={time_frame}")
+                      f"time_frame={time_frame} and periodicity={periodicity}")
 
     ExchangeName = "NSE" if instrument_identifier not in indices_list else "NFO"
     # InstIdentifier = "NIFTY-I" if instrument_identifier == "NIFTY" else instrument_identifier
@@ -264,7 +265,7 @@ def GetHistory(
     InstIdentifier = "NIFTY-I" if instrument_identifier == "NIFTY" else instrument_identifier
     InstIdentifier = "BANKNIFTY-I" if instrument_identifier == "BANKNIFTY" else InstIdentifier
 
-    Periodicity = "TICK" if from_time_in_epochs is None else "MINUTE"
+    Periodicity = periodicity
     Period = time_frame if time_frame is not None else "0"
 
     # current_time = datetime.datetime.now()
@@ -278,10 +279,19 @@ def GetHistory(
     # strMessage = '{"MessageType":"GetHistory","Period":"' + Period + '","UserTag":"' + user_tag + '","From":"' + from_time_in_epochs + '","To": "' + to_time_in_epochs + '","Exchange":"' + ExchangeName + '","InstrumentIdentifier":"' + InstIdentifier + '","Periodicity":"' + Periodicity + '","isShortIdentifier":"' + isShortIdentifier + '"}'
     # strMessage = '{"MessageType":"GetHistory","From":"' + from_time_in_epochs + '","Exchange":"' + ExchangeName + '","InstrumentIdentifier":"' + InstIdentifier + '","Periodicity":"' + Periodicity + '","isShortIdentifier":"' + isShortIdentifier + '"}'
 
-    strMessage = '{"MessageType":"GetHistory","Max":"10","Period":"' + str(Period) + '","UserTag":"' + str(user_tag) + '","Exchange":"' + str(ExchangeName) + '","InstrumentIdentifier":"' + str(InstIdentifier) + '","Periodicity":"' + str(Periodicity) + '","isShortIdentifier":"' + str(isShortIdentifier) + '"'
+    if periodicity == "MINUTE":
+        strMessage = '{"MessageType":"GetHistory","Max":"10","Period":"' + str(Period) + '","UserTag":"' + str(user_tag) + '","Exchange":"' + str(ExchangeName) + '","InstrumentIdentifier":"' + str(InstIdentifier) + '","Periodicity":"' + str(Periodicity) + '","isShortIdentifier":"' + str(isShortIdentifier) + '"'
+    else:
+        strMessage = '{"MessageType":"GetHistory","UserTag":"' + str(
+            user_tag) + '","Exchange":"' + str(ExchangeName) + '","InstrumentIdentifier":"' + str(
+            InstIdentifier) + '","Periodicity":"' + str(Periodicity) + '","isShortIdentifier":"' + str(
+            isShortIdentifier) + '"'
 
     # Adding from and to time
-    strMessage += f',{from_time_string},{to_time_string}' + "}"
+    if periodicity == "MINUTE":
+        strMessage += f',{from_time_string},{to_time_string}' + "}"
+    else:
+        strMessage += f',{from_time_string}' + "}"
 
     default_log.debug(f'Message : {strMessage}')
     ws.send(strMessage)
@@ -429,8 +439,35 @@ def on_message(ws, message):
                         elif periodicity == "TICK":
                             InstIdentifier = data['Request']["InstrumentIdentifier"]
                             default_log.debug(f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
+                            ticks = data["Result"]
+                            if len(ticks) > 0:
+                                no_of_ticks_to_get = 2 * (int(time_frame) * 60)
+                                # if len(ticks) <= no_of_ticks_to_get:
+                                #     default_log.debug(f"Getting previous {no_of_ticks_to_get} ticks for "
+                                #                       f"symbol={InstIdentifier}: {data['Result'][:no_of_ticks_to_get]}")
+                                #     add_previous_tick_data(symbol=InstIdentifier,
+                                #                            previous_tick_data=data['Result'][:no_of_ticks_to_get])
+                                # else:
+                                default_log.debug(f"Getting previous ALL ticks for "
+                                                  f"symbol={InstIdentifier}: {data['Result']}")
+                                add_previous_tick_data(symbol=InstIdentifier,
+                                                       previous_tick_data=data['Result'])
 
-                            add_previous_tick_data(symbol=InstIdentifier, previous_tick_data=[data['Result'][0]])
+                # elif message_type == "HistoryTickResult":
+                #
+                #     if "UserTag" in data["Request"].keys():
+                #         periodicity, time_frame = data["Request"]["UserTag"].split(",")
+                #
+                #         InstIdentifier = data['Request']["InstrumentIdentifier"]
+                #         default_log.debug(f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
+                #         ticks = data["Result"]
+                #         if len(ticks) > 0:
+                #             no_of_ticks_to_get = 2 * (int(time_frame) * 60)
+                #             if len(ticks) <= no_of_ticks_to_get:
+                #                 default_log.debug(f"Getting previous {no_of_ticks_to_get} ticks for "
+                #                                   f"symbol={InstIdentifier}: {data['Result'][:no_of_ticks_to_get]}")
+                #                 add_previous_tick_data(symbol=InstIdentifier,
+                #                                        previous_tick_data=data['Result'][:no_of_ticks_to_get])
 
         elif "LastTradeTime" in data.keys():
             default_log.debug(f"Data: {data}")
@@ -586,20 +623,24 @@ def get_global_data_feed_historical_data(
         # Add previous ticks of the trading_symbol
         # Calculate the from_time in epochs
 
-        # seconds = int((2 * 60) * time_frame)
-        # start_time = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
-        # default_log.debug(f"Start time for symbol={trading_symbol} and timeframe={time_frame} is: {start_time}")
-        #
-        # from_time_in_epochs = str(int(start_time.timestamp()))
-        #
-        # GetHistory(
-        #     ws=global_feedata_websocket,
-        #     instrument_identifier=trading_symbol,
-        #     from_time_in_epochs=from_time_in_epochs
-        # )
+        seconds = int((2 * 60) * time_frame)
+        start_time = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
+        start_time = start_time.astimezone(pytz.timezone("Asia/Kolkata"))
+        default_log.debug(f"Start time for symbol={trading_symbol} and timeframe={time_frame} for getting"
+                          f"previous tick data is: {start_time}")
+
+        from_time_in_epochs = str(int(start_time.timestamp()))
+
+        GetHistory(
+            ws=global_feedata_websocket,
+            instrument_identifier=trading_symbol,
+            time_frame=time_frame,
+            from_time_in_epochs=from_time_in_epochs,
+            periodicity="TICK"
+        )
         # threading.Thread(target=run_subscribe_realtime_in_thread, args=(trading_symbol,)).start()
         # default_log.debug(f"Started subscribing to Global Feed about symbol={trading_symbol}")
-        # # Add extra n ticks to the symbol_ticks
+        # Add extra n ticks to the symbol_ticks
         # run_add_previous_tick_data_of_symbol(trading_symbol)
 
         # Todo: Uncomment

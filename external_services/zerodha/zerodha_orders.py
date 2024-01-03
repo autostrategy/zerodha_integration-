@@ -57,6 +57,7 @@ def get_access_token_from_request_token(request_token: str):
 
         data = kite_connect.generate_session(request_token=request_token, api_secret=zerodha_api_secret)
 
+        default_log.debug(f"Session data retrieved: {data}")
         access_token = data["access_token"]
         default_log.debug(f"Access token retrieved from request_token={request_token} is {access_token} "
                           f"now setting the access token ({access_token}) to kite_access_token global variable")

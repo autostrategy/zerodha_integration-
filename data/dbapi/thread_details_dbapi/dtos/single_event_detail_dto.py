@@ -3,12 +3,14 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from data.dbapi.thread_details_dbapi.dtos.event_detail_dto import EventDetailDTO
+from data.enums.signal_type import SignalType
 
 
 class SingleEventDetailDTO(BaseModel):
     date_time: datetime
     symbol: str
     time_frame: str
+    signal_type: Optional[SignalType]
     event_one: EventDetailDTO
     event_two: EventDetailDTO
     event_three: EventDetailDTO

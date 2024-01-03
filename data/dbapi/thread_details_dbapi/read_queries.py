@@ -80,6 +80,7 @@ def fetch_all_event_details(session=None, close_session=True):
             date_time=thread_detail.event1_occur_time,
             symbol=thread_detail.symbol,
             time_frame=thread_detail.time_frame,
+            signal_type=thread_detail.signal_type,
             event_one=event_one,
             event_two=event_two,
             event_three=event_three,

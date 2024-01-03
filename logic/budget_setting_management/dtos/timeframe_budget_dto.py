@@ -5,10 +5,10 @@ from data.enums.budget_part import BudgetPart
 from data.enums.trades import Trades
 
 
-class ModifyBudgetSettingDTO(BaseModel):
+class TimeFrameBudgetDTO(BaseModel):
     timeframe_budget_id: int
     time_frame: Optional[str]
-    trades: Trades
     budget_utilization: BudgetPart
-    start_range: int
-    end_range: int
+    trades: Trades
+    start_range: Optional[int]
+    end_range: Optional[int]

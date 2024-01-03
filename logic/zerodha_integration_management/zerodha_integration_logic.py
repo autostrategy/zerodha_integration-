@@ -3,11 +3,11 @@ import threading
 
 import pytz
 
-from config import default_log, config_threshold_percent, sandbox_mode, no_of_candles_to_consider, \
+from config import default_log, sandbox_mode, no_of_candles_to_consider, \
     instrument_tokens_map, buffer_for_entry_trade, buffer_for_tp_trade, initial_start_range, initial_end_range, \
     max_retries, trade1_loss_percent, trade2_loss_percent, trade3_loss_percent, indices_list, \
     provide_ticker_data, symbol_tokens_map, use_truedata, use_global_feed, buffer_for_indices_entry_trade, \
-    buffer_for_indices_tp_trade
+    buffer_for_indices_tp_trade, extension1_threshold_percent, extension2_threshold_percent
 from typing import Optional
 
 import time as tm
@@ -148,8 +148,12 @@ def store_sl_details_of_active_trade(symbol: str, signal_type: SignalType, stop_
             symbol_stop_loss_details[key][time_frame] = stop_loss
 
 
-def store_all_timeframe_budget():
+def store_all_timeframe_budget(reset: bool = False):
     global timeframe_budget_dict
+
+    # Reset the timeframe_budget_dict and re-initialize it
+    if reset:
+        timeframe_budget_dict = {}
 
     # fetch the budget
     timeframe_budgets = get_all_timeframe_budgets()
@@ -367,6 +371,8 @@ def do_update_of_sl_values(
 
     # Fetch the time_frames
     time_frames_of_symbol = symbol_stop_loss_time_frames_with_stop_loss.keys()
+    default_log.debug(f"Timeframes fetched for symbol={symbol} having time_frame={timeframe} from "
+                      f"symbol_stop_loss_details={symbol_stop_loss_details}: {time_frames_of_symbol}")
 
     # TODO: New Flow of SL extension
     # Calculate current SL value multiplied by x1.5 and check if any of the previous SL value obtained is between the
@@ -386,6 +392,9 @@ def do_update_of_sl_values(
         {sl_timeframe: sl_value} for sl_timeframe, sl_value in symbol_stop_loss_time_frames_with_stop_loss.items()
         if sl_timeframe in bigger_timeframes
     ]
+
+    default_log.debug(f"bigger_timeframe_with_sl_values_list={bigger_timeframe_with_sl_values_list} for symbol={symbol} "
+                      f"and timeframe={timeframe} with key={key}")
 
     current_timeframe_sl_value = symbol_stop_loss_time_frames_with_stop_loss[timeframe]
     times_multiplied_sl = current_timeframe_sl_value * 1.5
@@ -510,8 +519,11 @@ def fetch_symbol_budget(symbol: str, time_frame: str):
     return budget
 
 
-def store_all_symbol_budget():
+def store_all_symbol_budget(reset: bool = False):
     global budget_dict
+
+    if reset:
+        budget_dict = {}
 
     # fetch the budget
     symbol_budgets = get_all_symbol_budgets()
@@ -1488,9 +1500,10 @@ def place_initial_zerodha_trades(
     event_data_dto.entry_trade_order_id = entry_trade_order_id
 
     if not extra_extension:
-        default_log.debug(f"[{signal_type.name}] Signal Trade order placed for symbol={symbol} at {candle_data['time']} "
-                          f"signal_trade_order_id={entry_trade_order_id} "
-                          f"and indices_symbol={indices_symbol}")
+        default_log.debug(
+            f"[{signal_type.name}] Signal Trade order placed for symbol={symbol} at {candle_data['time']} "
+            f"signal_trade_order_id={entry_trade_order_id} "
+            f"and indices_symbol={indices_symbol}")
     else:
         default_log.debug(
             f"[BEYOND EXTENSION] [{signal_type.name}] Signal Trade order placed for symbol={symbol} at "
@@ -2263,15 +2276,14 @@ def start_market_logging_for_buy(
     indices_symbol = None
     prev_timestamp = None
 
-    # defining loss budget
-    loss_budget = fetch_symbol_budget(symbol, timeframe)
-
     # todo: add trades to be done
     trades_details_dto = None
     current_time = None
     dto = None
     sl_got_extended = False
     maximum_trades_to_make = 0
+
+    initial_close_price = None
 
     tried_creating_entry_order = False
     tried_creating_extension1_order = False
@@ -2280,47 +2292,55 @@ def start_market_logging_for_buy(
     indices_quantity_multiplier = 50 if symbol == "NIFTY" else 45
 
     while True:
+        # defining loss budget
+        loss_budget = fetch_symbol_budget(symbol, timeframe)
+
         timestamp = data.iloc[-1]['time']
         if prev_timestamp is None:
             prev_timestamp = timestamp
 
         # TODO: comment this
-        if not is_restart:
-            if not use_current_candle and not is_restart:
-                if current_time is None:
-                    current_time = data.iloc[-1]["time"]
-
-                next_time = data.iloc[-1]["time"]
-                if next_time.minute <= current_time.minute:
-                    data = get_next_data(
-                        is_restart=is_restart,
-                        timeframe=timeframe,
-                        instrument_token=instrument_token,
-                        interval=interval,
-                        from_timestamp=data.iloc[-1]["time"]
-                    )
-
-                    if data is None:
-                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                          f"and timeframe={timeframe}")
-                        break
-                    continue
-                else:
-                    use_current_candle = True
-
-                    data = get_next_data(
-                        is_restart=is_restart,
-                        timeframe=timeframe,
-                        instrument_token=instrument_token,
-                        interval=interval,
-                        from_timestamp=data.iloc[-1]["time"]
-                    )
-
-                    if data is None:
-                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                          f"and timeframe={timeframe}")
-                        break
-                    continue
+        # if not is_restart:
+        #     if not use_current_candle:  # use_current_candle = True and is_restart = False (not True and not False) => False and True => False
+        #         if current_time is None:
+        #             current_time = data.iloc[-1]["time"]
+        #
+        #         next_time = data.iloc[-1]["time"]
+        #         default_log.debug(f"Current Time ({current_time}) and Next Time ({next_time}) for symbol={symbol} "
+        #                           f"having timeframe={timeframe}")
+        #         # next_time = 13:55
+        #         # current_time = 13:50
+        #         # 55 <= 50 False
+        #         if next_time.minute <= current_time.minute:
+        #             data = get_next_data(
+        #                 is_restart=is_restart,
+        #                 timeframe=timeframe,
+        #                 instrument_token=instrument_token,
+        #                 interval=interval,
+        #                 from_timestamp=data.iloc[-1]["time"]
+        #             )
+        #
+        #             if data is None:
+        #                 default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+        #                                   f"and timeframe={timeframe}")
+        #                 break
+        #             continue
+        #         else:
+        #             use_current_candle = True
+        #
+        #             data = get_next_data(
+        #                 is_restart=is_restart,
+        #                 timeframe=timeframe,
+        #                 instrument_token=instrument_token,
+        #                 interval=interval,
+        #                 from_timestamp=data.iloc[-1]["time"]
+        #             )
+        #
+        #             if data is None:
+        #                 default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+        #                                   f"and timeframe={timeframe}")
+        #                 break
+        #             continue
 
         dto, data_dictionary = trade_logic_sell(symbol, timeframe, data.iloc[-1], data_dictionary)
         dto.current_candle_low = data.iloc[-1]["low"]
@@ -2402,10 +2422,10 @@ def start_market_logging_for_buy(
                     if prev_timestamp.hour == timestamp.hour:
                         time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
                     else:
-                        time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
+                        time_difference = abs(int((60 - prev_timestamp.minute) - timestamp.minute))
 
                     if time_difference >= int(timeframe):
-                        default_log.debug(f"Time difference ({time_difference}) == Timeframe ({int(timeframe)})")
+                        default_log.debug(f"Time difference ({time_difference}) >= Timeframe ({int(timeframe)})")
                         prev_timestamp = timestamp
                         candles_checked += 1
                 else:
@@ -2416,49 +2436,53 @@ def start_market_logging_for_buy(
 
         if (dto.event2_occur_time is not None) and (dto.event3_occur_time is not None):
 
-            # todo: find out how many trades needs to be made and the budget to be used
-            if trades_details_dto is None:
+            # find out how many trades needs to be made and the budget to be used
+            # get the initial close price
+            if initial_close_price is None:
+                initial_close_price = data.iloc[-1]["close"]
 
-                close_price = data.iloc[-1]["close"]
-                trades_details_dto = get_budget_and_no_of_trade_details(
-                    budget=loss_budget,
-                    close_price=close_price,
-                    dto=dto
-                )
+            # if trades_details_dto is None:
 
-                default_log.debug(f"Budget and Trade details retrieved for symbol={symbol} "
-                                  f"and time_frame={dto.time_frame} having close_price={close_price}: "
-                                  f"{trades_details_dto}")
+            close_price = initial_close_price
+            trades_details_dto = get_budget_and_no_of_trade_details(
+                budget=loss_budget,
+                close_price=close_price,
+                dto=dto
+            )
 
-                if (not trades_details_dto.trades_to_make.entry_trade) and \
-                        (not trades_details_dto.trades_to_make.extension1_trade) and \
-                        (not trades_details_dto.trades_to_make.extension2_trade):
-                    default_log.debug(f"No TRADES are to be made for symbol={symbol} and time_frame={timeframe}")
-                    break
+            default_log.debug(f"Budget and Trade details retrieved for symbol={symbol} "
+                              f"and time_frame={dto.time_frame} having close_price={close_price}: "
+                              f"{trades_details_dto}")
 
-                # Find out how many trades would be made
-                if trades_details_dto.trades_to_make.entry_trade:
-                    default_log.debug(f"Make Entry Trade for symbol={symbol} and indices_symbol={indices_symbol} "
-                                      f"having time_frame={timeframe}")
-                    maximum_trades_to_make += 1
-                else:
-                    # if first trade should not be made then increment trades_made by 1 (for checking of condition of
-                    # extension 1 and extension 2 trade)
-                    tried_creating_entry_order = True
-                    trades_made += 1
+            if (not trades_details_dto.trades_to_make.entry_trade) and \
+                    (not trades_details_dto.trades_to_make.extension1_trade) and \
+                    (not trades_details_dto.trades_to_make.extension2_trade):
+                default_log.debug(f"No TRADES are to be made for symbol={symbol} and time_frame={timeframe}")
+                break
 
-                if trades_details_dto.trades_to_make.extension1_trade:
-                    default_log.debug(f"Make Extension 1 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
-                                      f"having time_frame={timeframe}")
-                    maximum_trades_to_make += 1
-                else:
-                    tried_creating_extension1_order = True
-                    trades_made += 1
+            # Find out how many trades would be made
+            if trades_details_dto.trades_to_make.entry_trade:
+                default_log.debug(f"Make Entry Trade for symbol={symbol} and indices_symbol={indices_symbol} "
+                                  f"having time_frame={timeframe}")
+                maximum_trades_to_make += 1
+            else:
+                # if first trade should not be made then increment trades_made by 1 (for checking of condition of
+                # extension 1 and extension 2 trade)
+                tried_creating_entry_order = True
+                trades_made += 1
 
-                if trades_details_dto.trades_to_make.extension2_trade:
-                    default_log.debug(f"Make Extension 2 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
-                                      f"having time_frame={timeframe}")
-                    maximum_trades_to_make += 1
+            if trades_details_dto.trades_to_make.extension1_trade:
+                default_log.debug(f"Make Extension 1 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
+                                  f"having time_frame={timeframe}")
+                maximum_trades_to_make += 1
+            else:
+                tried_creating_extension1_order = True
+                trades_made += 1
+
+            if trades_details_dto.trades_to_make.extension2_trade:
+                default_log.debug(f"Make Extension 2 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
+                                  f"having time_frame={timeframe}")
+                maximum_trades_to_make += 1
 
             if symbol in indices_list:
                 # Getting the indices symbol for the index symbol
@@ -2604,7 +2628,7 @@ def start_market_logging_for_buy(
 
             store_sl_details_of_active_trade(
                 symbol=symbol,
-                signal_type=SignalType.SELL,
+                signal_type=SignalType.BUY,
                 stop_loss=dto.sl_value,
                 time_frame=int(timeframe)
             )
@@ -2819,7 +2843,24 @@ def start_market_logging_for_buy(
                                   f"and candle_high_price = {candle_high_price} at timestamp = {extension_time_stamp}")
 
                 entry_price_difference = abs(dto.sl_value - candle_high_price)
-                threshold = extension_diff * (config_threshold_percent * trades_made)
+
+                if tried_creating_extension1_order and trades_details_dto.trades_to_make.extension1_trade:
+                    default_log.debug(f"Extension 1 trade has been made as Extension 1 Trade order id="
+                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 2 "
+                                      f"trade threshold percent={extension2_threshold_percent}")
+                    threshold_percent = extension2_threshold_percent
+                else:
+                    default_log.debug(f"Extension 1 trade has not been made as Extension 1 Trade order id="
+                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 1 "
+                                      f"trade threshold percent={extension1_threshold_percent}")
+                    threshold_percent = extension1_threshold_percent
+
+                # threshold = extension_diff * (config_threshold_percent * trades_made)
+                threshold = extension_diff * threshold_percent
 
                 # If second trade is already done
                 if trades_made == 2:
@@ -2854,8 +2895,9 @@ def start_market_logging_for_buy(
 
                                 total_quantity = int(round(total_quantity, 0))
                                 default_log.debug(f"[EXTENSION] Rounding off total_quantity ({total_quantity}) to the "
-                                                  f"indices_quantity_multiplier ({indices_quantity_multiplier}) for symbol={symbol} "
-                                                  f"and indices_symbol={indices_symbol} having time_frame={timeframe}")
+                                                  f"indices_quantity_multiplier ({indices_quantity_multiplier}) for "
+                                                  f"symbol={symbol} and indices_symbol={indices_symbol} "
+                                                  f"having time_frame={timeframe}")
 
                                 total_quantity = round_to_nearest_multiplier(total_quantity,
                                                                              indices_quantity_multiplier)
@@ -3051,8 +3093,8 @@ def start_market_logging_for_buy(
             # Check if tried creating market order, extension1 order and extension2 order. If yes then create a MARKET
             # order with only SL-M order and no LIMIT order
             if (tried_creating_entry_order and tried_creating_extension1_order and tried_creating_extension2_order) \
-                and (dto.entry_trade_order_id is None and dto.extension1_trade_order_id is None and
-                     dto.extension2_trade_order_id is None):
+                    and (dto.entry_trade_order_id is None and dto.extension1_trade_order_id is None and
+                         dto.extension2_trade_order_id is None):
                 default_log.debug(f"For symbol={symbol} having timeframe={timeframe} there has been a attempt to "
                                   f"create entry order (as tried_creating_entry_order={tried_creating_entry_order}) "
                                   f"and to create extension1_order (as tried_creating_extension1_order="
@@ -3082,6 +3124,8 @@ def start_market_logging_for_buy(
                                       f"{timeframe} with quantity={dto.extension_quantity}")
 
                     dto.entry_trade_order_id = extension_indices_market_order_id
+                    dto.sl_order_status = 'OPEN'
+                    dto.tp_order_status = 'OPEN'
                 else:
                     event_data_dto, error_occurred = place_initial_zerodha_trades(
                         event_data_dto=dto,
@@ -3476,13 +3520,12 @@ def start_market_logging_for_sell(
     prev_timestamp = None
     dto = None
 
-    # Defining loss budget
-    loss_budget = fetch_symbol_budget(symbol, timeframe)
-
     trades_details_dto = None
     temp_current_time = None
     sl_got_extended = False
     maximum_trades_to_make = 0
+
+    initial_close_price = None
 
     tried_creating_entry_order = False
     tried_creating_extension1_order = False
@@ -3491,47 +3534,52 @@ def start_market_logging_for_sell(
     indices_quantity_multiplier = 50 if symbol == "NIFTY" else 45
 
     while True:
+        # Defining loss budget
+        loss_budget = fetch_symbol_budget(symbol, timeframe)
+
         timestamp = data.iloc[-1]['time']
         if prev_timestamp is None:
             prev_timestamp = timestamp
 
         # TODO: comment this
-        if not is_restart:
-            if not use_current_candle and not is_restart:
-                if temp_current_time is None:
-                    temp_current_time = data.iloc[-1]["time"]
-
-                next_time = data.iloc[-1]["time"]
-                if next_time.minute <= temp_current_time.minute:
-                    data = get_next_data(
-                        is_restart=is_restart,
-                        timeframe=timeframe,
-                        instrument_token=instrument_token,
-                        interval=interval,
-                        from_timestamp=data.iloc[-1]["time"]
-                    )
-
-                    if data is None:
-                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                          f"and timeframe={timeframe}")
-                        break
-                    continue
-                else:
-                    use_current_candle = True
-
-                    data = get_next_data(
-                        is_restart=is_restart,
-                        timeframe=timeframe,
-                        instrument_token=instrument_token,
-                        interval=interval,
-                        from_timestamp=data.iloc[-1]["time"]
-                    )
-
-                    if data is None:
-                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                          f"and timeframe={timeframe}")
-                        break
-                    continue
+        # if not is_restart:
+        #     if not use_current_candle:
+        #         if temp_current_time is None:
+        #             temp_current_time = data.iloc[-1]["time"]
+        #
+        #         next_time = data.iloc[-1]["time"]
+        #         default_log.debug(f"Current Time ({temp_current_time}) and Next Time ({next_time}) for symbol={symbol} "
+        #                           f"having timeframe={timeframe}")
+        #         if next_time.minute <= temp_current_time.minute:
+        #             data = get_next_data(
+        #                 is_restart=is_restart,
+        #                 timeframe=timeframe,
+        #                 instrument_token=instrument_token,
+        #                 interval=interval,
+        #                 from_timestamp=data.iloc[-1]["time"]
+        #             )
+        #
+        #             if data is None:
+        #                 default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+        #                                   f"and timeframe={timeframe}")
+        #                 break
+        #             continue
+        #         else:
+        #             use_current_candle = True
+        #
+        #             data = get_next_data(
+        #                 is_restart=is_restart,
+        #                 timeframe=timeframe,
+        #                 instrument_token=instrument_token,
+        #                 interval=interval,
+        #                 from_timestamp=data.iloc[-1]["time"]
+        #             )
+        #
+        #             if data is None:
+        #                 default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+        #                                   f"and timeframe={timeframe}")
+        #                 break
+        #             continue
 
         dto, data_dictionary = trade_logic_buy(symbol, timeframe, data.iloc[-1], data_dictionary)
         dto.current_candle_low = data.iloc[-1]["low"]
@@ -3613,7 +3661,7 @@ def start_market_logging_for_sell(
                     if prev_timestamp.hour == timestamp.hour:
                         time_difference = abs(int(prev_timestamp.minute - timestamp.minute))
                     else:
-                        time_difference = abs(int((60 - prev_timestamp) - timestamp.minute))
+                        time_difference = abs(int((60 - prev_timestamp.minute) - timestamp.minute))
 
                     if time_difference >= int(timeframe):
                         default_log.debug(f"Time difference ({time_difference}) == Timeframe ({int(timeframe)})")
@@ -3627,47 +3675,51 @@ def start_market_logging_for_sell(
 
         if (dto.event2_occur_time is not None) and (dto.event3_occur_time is not None):
 
-            # todo: find out how many trades needs to be made and the budget to be used
-            if trades_details_dto is None:
+            # find out how many trades needs to be made and the budget to be used
+            # get the initial close price
+            if initial_close_price is None:
+                initial_close_price = data.iloc[-1]["close"]
 
-                close_price = data.iloc[-1]["close"]
-                trades_details_dto = get_budget_and_no_of_trade_details(
-                    budget=loss_budget,
-                    close_price=close_price,
-                    dto=dto
-                )
+            # if trades_details_dto is None:
 
-                default_log.debug(f"Budget and Trade details retrieved for symbol={symbol} "
-                                  f"and time_frame={dto.time_frame} having close_price={close_price}: "
-                                  f"{trades_details_dto}")
+            close_price = initial_close_price
+            trades_details_dto = get_budget_and_no_of_trade_details(
+                budget=loss_budget,
+                close_price=close_price,
+                dto=dto
+            )
 
-                if (not trades_details_dto.trades_to_make.entry_trade) and \
-                        (not trades_details_dto.trades_to_make.extension1_trade) and \
-                        (not trades_details_dto.trades_to_make.extension2_trade):
-                    default_log.debug(f"No TRADES are to be made for symbol={symbol} and time_frame={timeframe}")
-                    break
+            default_log.debug(f"Budget and Trade details retrieved for symbol={symbol} "
+                              f"and time_frame={dto.time_frame} having close_price={close_price}: "
+                              f"{trades_details_dto}")
 
-                # Find out how many trades would be made
-                if trades_details_dto.trades_to_make.entry_trade:
-                    default_log.debug(f"Make Entry Trade for symbol={symbol} and indices_symbol={indices_symbol} "
-                                      f"having time_frame={timeframe}")
-                    maximum_trades_to_make += 1
-                else:
-                    tried_creating_entry_order = True
-                    trades_made += 1
+            if (not trades_details_dto.trades_to_make.entry_trade) and \
+                    (not trades_details_dto.trades_to_make.extension1_trade) and \
+                    (not trades_details_dto.trades_to_make.extension2_trade):
+                default_log.debug(f"No TRADES are to be made for symbol={symbol} and time_frame={timeframe}")
+                break
 
-                if trades_details_dto.trades_to_make.extension1_trade:
-                    default_log.debug(f"Make Extension 1 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
-                                      f"having time_frame={timeframe}")
-                    maximum_trades_to_make += 1
-                else:
-                    tried_creating_extension1_order = True
-                    trades_made += 1
+            # Find out how many trades would be made
+            if trades_details_dto.trades_to_make.entry_trade:
+                default_log.debug(f"Make Entry Trade for symbol={symbol} and indices_symbol={indices_symbol} "
+                                  f"having time_frame={timeframe}")
+                maximum_trades_to_make += 1
+            else:
+                tried_creating_entry_order = True
+                trades_made += 1
 
-                if trades_details_dto.trades_to_make.extension2_trade:
-                    default_log.debug(f"Make Extension 2 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
-                                      f"having time_frame={timeframe}")
-                    maximum_trades_to_make += 1
+            if trades_details_dto.trades_to_make.extension1_trade:
+                default_log.debug(f"Make Extension 1 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
+                                  f"having time_frame={timeframe}")
+                maximum_trades_to_make += 1
+            else:
+                tried_creating_extension1_order = True
+                trades_made += 1
+
+            if trades_details_dto.trades_to_make.extension2_trade:
+                default_log.debug(f"Make Extension 2 Trade for symbol={symbol} and indices_symbol={indices_symbol} "
+                                  f"having time_frame={timeframe}")
+                maximum_trades_to_make += 1
 
             if symbol in indices_list:
                 default_log.debug(f"Getting indices symbol as trading symbol={symbol} is in "
@@ -3814,7 +3866,7 @@ def start_market_logging_for_sell(
 
             store_sl_details_of_active_trade(
                 symbol=symbol,
-                signal_type=SignalType.BUY,
+                signal_type=SignalType.SELL,
                 stop_loss=dto.sl_value,
                 time_frame=int(timeframe)
             )
@@ -4005,7 +4057,23 @@ def start_market_logging_for_sell(
 
                 entry_price_difference = abs(dto.sl_value - current_candle_low)
 
-                threshold = extension_diff * (config_threshold_percent * trades_made)
+                if tried_creating_extension1_order and trades_details_dto.trades_to_make.extension1_trade:
+                    default_log.debug(f"Extension 1 trade has been made as Extension 1 Trade order id="
+                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 2 "
+                                      f"trade threshold percent={extension2_threshold_percent}")
+                    threshold_percent = extension2_threshold_percent
+                else:
+                    default_log.debug(f"Extension 1 trade has not been made as Extension 1 Trade order id="
+                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 1 "
+                                      f"trade threshold percent={extension1_threshold_percent}")
+                    threshold_percent = extension1_threshold_percent
+
+                # threshold = extension_diff * (config_threshold_percent * trades_made)
+                threshold = extension_diff * threshold_percent
 
                 default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
                                   f"at timestamp = {extension_time_stamp} and "
@@ -4229,7 +4297,7 @@ def start_market_logging_for_sell(
                 else:
                     default_log.debug(
                         f"Extension Trade condition not met as values: extension_diff={extension_diff} "
-                        f"trades_made={trades_made}, config_threshold_percent={config_threshold_percent} "
+                        f"trades_made={trades_made}, threshold_percent={threshold_percent} "
                         f"entry_price={entry_price} and sl_value={dto.sl_value} "
                         f"and entry_price_difference: {entry_price_difference} < threshold: {threshold} "
                         f"and symbol={symbol} and indices_symbol={indices_symbol} and "
@@ -4272,6 +4340,8 @@ def start_market_logging_for_sell(
                                           f"time_frame={timeframe} with quantity={dto.extension_quantity}")
 
                         dto.entry_trade_order_id = extension_indices_market_order_id
+                        dto.sl_order_status = 'OPEN'
+                        dto.tp_order_status = 'OPEN'
                     else:
                         event_data_dto, error_occurred = place_initial_zerodha_trades(
                             event_data_dto=dto,

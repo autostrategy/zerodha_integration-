@@ -33,23 +33,32 @@ def add_new_budget_setting(dto: AddBudgetSettingDTO, session=None, commit=True):
 
 
 @dbapi_exception_handler
-def update_budget_setting(dto: ModifyBudgetSettingDTO, session=None, commit=True):
-    default_log.debug(f"inside update_budget_setting with dto={dto}")
+def update_budget_setting(
+        dto: ModifyBudgetSettingDTO,
+        session=None,
+        commit=True
+):
+    default_log.debug(f"inside update_budget_setting with timeframe_budget_id={dto.timeframe_budget_id} and dto={dto}")
 
     db = session if session else next(get_db())
 
-    timeframe_budget = db.query(TimeframeBudgets).filter(
-        TimeframeBudgets.time_frame == dto.time_frame,
-        TimeframeBudgets.budget == dto.budget_utilization,
-        TimeframeBudgets.trades == dto.trades
-    ).first()
+    timeframe_budget = db.query(TimeframeBudgets).filter(TimeframeBudgets.id == dto.timeframe_budget_id).first()
 
     if timeframe_budget is None:
         default_log.debug(f"Timeframe budget not found having time_frame={dto.time_frame}, "
                           f"budget_utilization={dto.budget_utilization} and trades={dto.trades}")
-        return False
+        return None
 
-    default_log.debug(f"Timeframe budget found for timeframe ({dto.time_frame}): {timeframe_budget}")
+    default_log.debug(f"Timeframe budget found for timeframe_budget_id ({dto.timeframe_budget_id}): {timeframe_budget}")
+
+    if dto.trades is not None:
+        default_log.debug(f"Updating trades from {timeframe_budget.trades} to {dto.trades}")
+        timeframe_budget.trades = dto.trades
+
+    if dto.budget_utilization is not None:
+        default_log.debug(f"Updating budget_utilization from {timeframe_budget.budget} to "
+                          f"{dto.budget_utilization}")
+        timeframe_budget.budget = dto.budget_utilization
 
     if dto.start_range is not None:
         default_log.debug(f"Updating start range from {timeframe_budget.start_range} to {dto.start_range}")
@@ -58,6 +67,8 @@ def update_budget_setting(dto: ModifyBudgetSettingDTO, session=None, commit=True
     if dto.end_range is not None:
         default_log.debug(f"Updating end range from {timeframe_budget.end_range} to {dto.end_range}")
         timeframe_budget.end_range = dto.end_range
+
+    db.add(timeframe_budget)
 
     if commit:
         default_log.debug(f"Committing timeframe_budget update for time_frame={dto.time_frame}")

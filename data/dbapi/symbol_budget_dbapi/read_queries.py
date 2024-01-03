@@ -5,6 +5,19 @@ from data.models.symbol_budget import SymbolBudget
 
 
 @dbapi_exception_handler
+def get_symbol_budget_by_id(symbol_budget_id: int, session=None, close_session=True):
+    default_log.debug(f"inside get_symbol_budget_by_id with id={symbol_budget_id}")
+
+    db = session if session else next(get_db())
+
+    symbol_budget = db.query(SymbolBudget).filter(SymbolBudget.id == symbol_budget_id).first()
+
+    default_log.debug(f"Symbol budget found for id ({symbol_budget_id})={symbol_budget}")
+
+    return symbol_budget
+
+
+@dbapi_exception_handler
 def get_symbol_budget(symbol: str, time_frame: str = None, session=None, close_session=True):
     default_log.debug(f"inside get_symbol_budget for symbol={symbol} and time_frame={time_frame}")
 

@@ -15,3 +15,4 @@ def get_all_event_details() -> AllEventDetailsResponse:
         return AllEventDetailsResponse(error=True, error_message="An error occurred while fetching all event details")
 
     return AllEventDetailsResponse(error=False, data=event_details)
+

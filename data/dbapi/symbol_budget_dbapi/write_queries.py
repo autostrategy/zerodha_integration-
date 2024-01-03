@@ -31,20 +31,25 @@ def add_symbol_budget(dto: AddSymbolBudgetDTO, session=None, commit=True):
 
 
 @dbapi_exception_handler
-def modify_symbol_budget(dto: ModifySymbolBudgetDTO, session=None, commit=True):
+def modify_symbol_budget(
+        id: int,
+        dto: ModifySymbolBudgetDTO,
+        session=None,
+        commit=True
+):
     default_log.debug(f"inside modify_symbol_budget with modify_symbol_budget_dto={dto}")
 
     db = session if session else next(get_db())
 
-    symbol_budget = db.query(SymbolBudget).filter(
-        SymbolBudget.symbol == dto.symbol,
-        SymbolBudget.time_frame == dto.time_frame).first()
+    symbol_budget = db.query(SymbolBudget).filter(SymbolBudget.id == id).first()
 
-    default_log.debug(f"Symbol budget found for symbol ({dto.symbol}) and "
-                      f"time_frame ({dto.time_frame}) = {symbol_budget} "
-                      f"Updating the symbol budget from {symbol_budget.budget} to {dto.budget}")
+    default_log.debug(f"Symbol budget found for symbol budget id ({id}): {symbol_budget}")
+
+    symbol_budget.symbol = dto.symbol
+    symbol_budget.time_frame = dto.time_frame
 
     symbol_budget.budget = dto.budget
+    db.add(symbol_budget)
 
     if commit:
         default_log.debug(f"Committing budget update for symbol={dto.symbol} and time_frame={dto.time_frame}")

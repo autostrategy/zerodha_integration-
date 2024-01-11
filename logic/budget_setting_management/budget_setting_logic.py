@@ -62,7 +62,7 @@ def get_all_timeframe_budget_logic():
     for timeframe_budget in response:
         tmf_budget = TimeFrameBudgetDTO(
             timeframe_budget_id=timeframe_budget.id,
-            timeframe=timeframe_budget.time_frame,
+            time_frame=timeframe_budget.time_frame,
             budget_utilization=timeframe_budget.budget,
             trades=timeframe_budget.trades,
             start_range=timeframe_budget.start_range,

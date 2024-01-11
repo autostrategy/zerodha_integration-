@@ -1,5 +1,6 @@
 import re
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pandas as pd
@@ -14,15 +15,12 @@ from config import default_log, instrument_tokens_map
 from data.enums.signal_type import SignalType
 import requests
 
-# todo: uncomment after historical api completed
-from external_services.global_datafeed.get_data import get_global_data_feed_historical_data, get_nfo_closest_expiry_date
+from external_services.global_datafeed.get_data import get_global_data_feed_historical_data
 from external_services.truedata.truedata_external_service import get_truedata_historical_data
 
 provide_historical_data = False
 provide_minute_data = True
 kite_access_token = ""
-
-import os
 
 TOKEN_FILE_PATH = 'access_token.txt'
 
@@ -269,6 +267,8 @@ def store_access_token_of_kiteconnect(access_token: str):
 
 
 def check_open_position_status_and_close():
+    global kite_access_token
+    default_log.debug(f"inside check_open_position_status_and_close")
     kite = get_kite_account_api()
 
     cancel_all_open_orders(kite)
@@ -306,6 +306,13 @@ def check_open_position_status_and_close():
             order_type=kite.ORDER_TYPE_MARKET,
             product=kite.PRODUCT_NRML,
         )
+
+    kite_access_token = ""
+    try:
+        default_log.debug(f"Removing access_token.txt file")
+        os.remove("access_token.txt")
+    except Exception as e:
+        default_log.debug(f"An error occurred while removing access_token.txt file. Error: {e}")
 
 
 def get_instrument_token_for_symbol(symbol: str, exchange: str = "NSE"):
@@ -457,15 +464,15 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
 
     default_log.debug(f"Clean symbol of trading_symbol={trading_symbol} is {clean_symbol}")
 
-    # # Get the nearest Thursday date in the current week
-    # today = datetime.now()
-    #
-    # if today.weekday() == 3:  # If today is Thursday, get next Thursday
-    #     days_until_thursday = 7
-    # else:
-    #     days_until_thursday = (3 - today.weekday() + 7) % 7
-    #
-    # nearest_thursday = today + timedelta(days=days_until_thursday)
+    # Get the nearest Thursday date in the current week
+    today = datetime.now()
+
+    if today.weekday() == 3:  # If today is Thursday, get next Thursday
+        days_until_thursday = 7
+    else:
+        days_until_thursday = (3 - today.weekday() + 7) % 7
+
+    nearest_thursday = today + timedelta(days=days_until_thursday)
     #
     # # Get the date of the previous Thursday
     # days_since_previous_thursday = (today.weekday() - 3 + 7) % 7
@@ -501,6 +508,57 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
     # Entry BUY: CE SELL: PE NIFTY1950023DECCE
 
     # Convert the Thursday date in the format: ddMMM
+    # Check if the next thursday falls under next month
+    # if nearest thursday falls under next month then format the next thursday date as ddMMM
+    # else format the next thursday date as YYMMDD (NIFTY2411119400CE 11th January 2024)
+
+    if trading_symbol == "NIFTY":
+        # For NIFTY the expiry day is Thursday
+        # Calculate the days until the next Thursday
+        current_date = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
+        days_until_next_thursday = (3 - current_date.weekday() + 7) % 7
+
+        default_log.debug(f"Days until next Thursday: {days_until_next_thursday}")
+
+        if days_until_next_thursday < 4:
+            # Calculate the next Thursday's date
+            next_thursday_date = current_date + timedelta(days=(3 - current_date.weekday() + 7) % 7 + 7)
+        else:
+            # Calculate the next Thursday's date
+            next_thursday_date = current_date + timedelta(days=days_until_next_thursday)
+
+        # Check if the next Thursday falls in the next month
+        if next_thursday_date.month > current_date.month:
+            # Format as YYMMM if next Thursday is in the next month
+            formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+        else:
+            # Format as YYMMDD if next Thursday is in the same month
+            formatted_next_expiry_date = next_thursday_date.strftime("%y%m%d").replace("0", "", 1)
+    else:
+        # For BANKNIFTY the expiry date is WEDNESDAY
+        # Calculate the days until the next Thursday
+        current_date = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
+        days_until_next_wednesday = (2 - current_date.weekday() + 7) % 7
+
+        default_log.debug(f"Days until next Wednesday: {days_until_next_wednesday}")
+
+        if days_until_next_wednesday < 3:
+            # Calculate the next Thursday's date
+            next_wednesday_date = current_date + timedelta(days=(2 - current_date.weekday() + 7) % 7 + 7)
+        else:
+            # Calculate the next Thursday's date
+            next_wednesday_date = current_date + timedelta(days=days_until_next_wednesday)
+
+        # Check if the next Thursday falls in the next month
+        if next_wednesday_date.month > current_date.month:
+            # Format as YYMMM if next Thursday is in the next month
+            formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+        else:
+            # Format as YYMMDD if next Thursday is in the same month
+            formatted_next_expiry_date = next_wednesday_date.strftime("%y%m%d").replace("0", "", 1)
+
+    default_log.debug(f"Formatted Next Expiry Date for trading_symbol={trading_symbol} is {formatted_next_expiry_date}")
+
     # nearest_thursday_str = nearest_thursday.strftime("%d%b").upper()
     # previous_thursday_str = previous_thursday.strftime("%d%b").upper()
     # two_thursdays_ago_str = two_thursdays_ago.strftime("%d%b").upper()
@@ -508,12 +566,25 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
     option_type = 'PE' if transaction_type == SignalType.SELL else 'CE'
 
     # Create the indices symbol
-    closest_expiry_date = get_nfo_closest_expiry_date(index_symbol=clean_symbol)
-    indices_symbol = clean_symbol + closest_expiry_date + str(nearest_price_value) + option_type
+    # closest_expiry_date = get_nfo_closest_expiry_date(index_symbol=clean_symbol)
+    indices_symbol = clean_symbol + formatted_next_expiry_date + str(nearest_price_value) + option_type
 
-    default_log.debug(f"Returning indices symbol {indices_symbol} for trading_symbol={trading_symbol} and "
-                      f"signal_type={transaction_type} and price={price}")
-    return indices_symbol
+    nfo_filepath = f"instrument_tokens_of_zerodha_{datetime.now().date()}.csv"
+    df = pd.read_csv(nfo_filepath)
+
+    nfo_df = df[df['exchange'] == "NFO"]
+    # Assuming 'indices_symbol' is a column in nfo_df
+    match = nfo_df[nfo_df['tradingsymbol'].str.contains(indices_symbol)]
+
+    # Check if there is a match
+    if not match.empty:
+        default_log.debug(f"Found a match in nfo_df! for = {indices_symbol}")
+        default_log.debug(f"Returning indices symbol {indices_symbol} for trading_symbol={trading_symbol} and "
+                          f"signal_type={transaction_type} and price={price}")
+        return indices_symbol
+    else:
+        default_log.debug(f"No match found in nfo_df for {indices_symbol}")
+        return None
 
     # indices_symbol_next_thursday = clean_symbol + nearest_thursday_str + str(nearest_50_value) + option_type
     # indices_symbol_previous_thursday = clean_symbol + previous_thursday_str + str(nearest_50_value) + option_type

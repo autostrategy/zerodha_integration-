@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from config import default_log
 from data.dbapi.thread_details_dbapi.dtos.event_detail_dto import EventDetailDTO
@@ -44,6 +44,7 @@ def fetch_all_event_details(session=None, close_session=True):
 
     # Adjust the time to midnight of the current date
     start_of_day = datetime.combine(current_date, datetime.min.time())
+    start_of_day = start_of_day - timedelta(days=3)
     end_of_day = datetime.combine(current_date, datetime.max.time())
 
     thread_details = (

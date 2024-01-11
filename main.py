@@ -18,7 +18,6 @@ from api.user_management.user_auth import auth_router
 from api.user_management.user_basic_api import user_router
 from api.event_management.event_managment_crud_api import event_router
 
-# todo: uncomment after finishing historical api
 from external_services.global_datafeed.get_data import start_global_data_feed_server
 from external_services.truedata.truedata_external_service import start_truedata_server
 from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data, \
@@ -118,17 +117,16 @@ async def startup():
         # Start the thread
         truedata_thread.start()
 
-    # elif config.use_global_feed:
-    # GLOBAL FEED DATA SERVER
-    global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
-    # Start the thread
-    global_feed_data_thread.start()
-
     # Load all symbol budgets
     store_all_symbol_budget()
 
     # Load all timeframe budgets and trade details
     store_all_timeframe_budget()
+
+    # GLOBAL FEED DATA SERVER
+    global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
+    # Start the thread
+    global_feed_data_thread.start()
 
     # Wait 5 seconds till GLOBAL data feed is not authenticated
     time.sleep(5)

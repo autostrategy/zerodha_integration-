@@ -46,21 +46,23 @@ reset_password_url = 'http://localhost:5000/auth/process-reset-password-request'
 log_file = 'app.log'  # TODO: Create a directory, set owner and group and set log file path to
 # /var/log/project-name/app.log
 default_logger = 'console'
-no_of_candles_to_consider = 10
+no_of_candles_to_consider = 1000
 status_query_wait_time = 30
 config_threshold_percent = 0.3
+extension1_threshold_percent = 0.44
+extension2_threshold_percent = 0.75
 # instrument_tokens_map = {"TCS": 16326146, "INFY": 408065, "ICICIBANK": 1270529,
 #                          "MRF": 16273154, "AXISBANK": 1510401,
 #                          "HDFCBANK": 16234754, "NIPPON": 139046660,
 #                          "3MINDIA": 121345, "CROMPTON": 16223490, "NIFTY50": 256265, "BANKNIFTY": 260105}
-instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "INFY": 408065, "TECHM": 3465729, "BANKNIFTY": 260105, "NIFTY": 256265}
+instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "INFY": 408065, "TECHM": 3465729, "BANKNIFTY": 260105, "NIFTY": 256265, "TCS": 2953217}
 # instrument_tokens_map = {"BANKNIFTY": 260105, "NIFTY": 256265}
 # instrument_tokens_map = {"AXISBANK": 1510401}
 # instrument_tokens_map = {"NIFTY": 256265}
 # symbol_tokens_map = {256265: "NIFTY"}
 # symbol_tokens_map = {1510401: "AXISBANK"}
 # symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 969473: "WIPRO"}
-symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 260105: "BANKNIFTY", 256265: "NIFTY"}
+symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 260105: "BANKNIFTY", 256265: "NIFTY", 2953217: "TCS"}
 # symbol_tokens_map = {260105: "BANKNIFTY", 256265: "NIFTY"}
 time_stamps = ["1", "3", "5", "15"]
 # time_stamps = ["1"]
@@ -71,7 +73,15 @@ trade3_loss_percent = 0.25
 provide_ticker_data = False
 use_truedata = False
 use_global_feed = True
-sandbox_mode = False
+sandbox_mode = True
+is_backtesting = True
+
+endpoint = "ws://test.lisuns.com:4575/"
+accesskey = "4a02d1f1-1a15-45c9-a9e7-1636cfeb6016"
+realtime_port = 8086
+zerodha_api_key = "w3j0a5u2wuvitqd9"
+zerodha_access_token = "1zZMv5L1wNc7zzZXjUEBgHJnlsLzzBK5"
+zerodha_api_secret = "riqoyqedxua91cysfwrurvwf1bzaodmf"
 
 KITE_API_URL = "https://api.kite.trade"
 KITE_API_LOGIN_URL = "https://kite.zerodha.com"
@@ -88,7 +98,13 @@ BANKNIFTY_INDEX_SYMBOL = "23DEC"
 buffer_for_indices_entry_trade = 0.0001
 buffer_for_indices_tp_trade = 0.0001
 
+BACKTEST_TICKS_FOLDER = 'backtest_ticks'
+BACKTEST_TRADES_FOLDER = 'backtest_trades'
 
+replay_tick = True
+
+truedata_username = ""
+truedata_password = ""
 secrets_file = Path(secrets_path)
 
 if secrets_file.is_file():

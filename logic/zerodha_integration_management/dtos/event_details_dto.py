@@ -46,3 +46,4 @@ class EventDetailsDTO(BaseModel):
     extension2_quantity: Optional[int]
     extension1_entry_price: Optional[float]
     extension2_entry_price: Optional[float]
+    stop_tracking_further_events: Optional[bool]

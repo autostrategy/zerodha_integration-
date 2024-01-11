@@ -1,7 +1,10 @@
-from datetime import datetime
+import threading
+from datetime import datetime, date
+import io
+import pandas as pd
 
 import pytz
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 
 from api.event_management.dtos.check_events_dto import CheckEventsDTO
@@ -9,6 +12,7 @@ from config import default_log, time_stamps, instrument_tokens_map
 from data.enums.configuration import Configuration
 from data.enums.signal_type import SignalType
 from decorators.handle_generic_exception import frontend_api_generic_exception
+from external_services.global_datafeed.get_data import download_tick_data_for_symbols, start_backtesting
 from logic.zerodha_integration_management.get_event_details_logic import get_all_event_details
 from logic.zerodha_integration_management.zerodha_integration_logic import log_event_trigger
 from standard_responses.standard_json_response import standard_json_response
@@ -88,3 +92,49 @@ def start_all_market_logging(
     except Exception as e:
         default_log.debug(f"An error occurred while starting logging: {e}")
         return standard_json_response(error=True, message="An error occurred while starting logging", data={})
+
+
+@event_router.post("/add-csv-for-backtesting")
+def add_csv_for_backtesting(
+    request: Request,
+    backtesting_data_date: date,
+    file: UploadFile = File(...)
+):
+    default_log.debug(f"inside /add-csv-for-backtesting")
+    columns_to_check = ['Symbol', 'Timeframe', 'Alert Type', 'Alert Time']
+
+    # Read and store the CSV file upload
+    try:
+        contents = file.file.read()
+        data_df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        backtesting_data_df_filename = f"backtest_data_{backtesting_data_date}.csv"
+
+        data_df.to_csv(backtesting_data_df_filename, index=False)
+
+        # Check if proper columns are present
+        columns_missing = [col for col in data_df.columns if col not in columns_to_check]
+        if len(columns_missing) > 0:
+            default_log.debug(f"The following columns are missing from the dataframe having columns ({data_df.columns})"
+                              f"={columns_missing}")
+            return standard_json_response(
+                error=True,
+                message=f"The following columns are missing: {columns_missing}",
+                data={}
+            )
+
+        start_backtesting(backtesting_data_df_filename)
+    except Exception as e:
+        return standard_json_response(
+            error=True, 
+            message="Error occurred while reading file",
+            data={}
+        )
+    
+    # Get all symbols from the data_df 'Symbol' columns
+    symbols = data_df['Symbol'].unique().tolist()
+    
+    # Download the tick data for the date for the symbols
+    threading.Thread(target=download_tick_data_for_symbols, args=(backtesting_data_date, symbols)).start()
+
+    return standard_json_response(error=False, message="ok", data={})
+

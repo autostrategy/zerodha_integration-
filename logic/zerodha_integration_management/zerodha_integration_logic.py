@@ -303,6 +303,12 @@ def get_budget_and_no_of_trade_details(
             target_timeframe_budget = timeframe_budget
             break
 
+    if target_timeframe_budget is None:
+        basic_key = 'basic'
+        default_log.debug(f"Target Timeframe Budget not found so setting the basic timeframe budget: "
+                          f"{timeframe_budget_dict.get(basic_key)}")
+        target_timeframe_budget = timeframe_budget_dict.get(basic_key)
+
     budget_part = target_timeframe_budget.budget
 
     if budget_part == BudgetPart.FULL_BUDGET:

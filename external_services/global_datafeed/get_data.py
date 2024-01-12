@@ -56,7 +56,7 @@ def start_backtesting(filename: str):
     trade_alerts_df["Event Tracking Started"] = False
 
 
-def download_tick_data_for_symbols(date: datetime.date, symbols_list: list[str]):
+def download_tick_data_for_symbols(backtest_date: datetime.date, symbols_list: list[str]):
     global global_feedata_websocket
     global symbols
 
@@ -64,18 +64,19 @@ def download_tick_data_for_symbols(date: datetime.date, symbols_list: list[str])
     symbols.extend(symbols_clean_list)
 
     default_log.debug(f"inside download_tick_data_for_symbols with date="
-                      f"{date} and symbols_list={symbols_list}")
+                      f"{backtest_date} and symbols_list={symbols_list}")
     # Convert date to ist datetime with starting time as 09:30:00+05:30
-    from_time = datetime.datetime.combine(date, datetime.time(9, 30))
-    from_time_in_ist = from_time.astimezone(pytz.timezone("Asia/Kolkata"))
+    desired_start_time = datetime.time(9, 30)
+    from_time_in_ist = datetime.datetime.combine(backtest_date, desired_start_time, tzinfo=pytz.timezone("Asia/Kolkata"))
 
     from_time_in_epochs = str(int(from_time_in_ist.timestamp()))
 
-    to_time = datetime.datetime.combine(date, datetime.time(15, 30))
-    to_time_in_ist = to_time.astimezone(pytz.timezone("Asia/Kolkata"))
+    desired_end_time = datetime.time(15, 30)
+    to_time_in_ist = datetime.datetime.combine(backtest_date, desired_end_time, tzinfo=pytz.timezone("Asia/Kolkata"))
 
     to_time_in_epochs = str(int(to_time_in_ist.timestamp()))
-    default_log.debug(f"From time in epochs={from_time_in_epochs} for From time in IST={from_time_in_ist}")
+    default_log.debug(f"From time in epochs={from_time_in_epochs} for From time in IST={from_time_in_ist} and To "
+                      f"time in epochs={to_time_in_epochs} for To time in IST={to_time_in_ist}")
     for symbol in symbols_list:
 
         # Check whether file exists, if yes then delete it and create new

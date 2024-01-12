@@ -7,7 +7,7 @@ import threading
 from kiteconnect import KiteTicker
 from config import zerodha_api_key, zerodha_access_token, default_log, instrument_tokens_map, symbol_tokens_map, \
     indices_list
-from external_services.zerodha.zerodha_orders import get_instrument_token_for_symbol
+from external_services.zerodha.zerodha_orders import get_instrument_token_for_symbol, get_symbol_for_instrument_token
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -39,7 +39,12 @@ def on_ticks(ws, ticks):
         symbol_ticks[token] = symbol_ticks_data
 
     for token in subscribed_tokens:
-        symbol = symbol_tokens_map[token]
+        symbol = symbol_tokens_map.get(token, None)
+
+        if symbol is None:
+            inst_token = str(token)
+            symbol = get_symbol_for_instrument_token(inst_token)
+            default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
 
         # Get all intervals of token
         symbol_interval_data = symbols_interval_data.get(symbol, None)

@@ -167,6 +167,7 @@ def check_timestamp_and_start_event_checking(ist_timestamp: datetime, symbol: st
 
 
 def feed_ticks_of_symbol(symbol: str):
+    global symbols
     default_log.debug(f"inside feed_ticks_of_symbol with symbol={symbol}")
     trading_symbol = symbol.split('-')[0]
     # Get the filename from symbol
@@ -188,8 +189,9 @@ def feed_ticks_of_symbol(symbol: str):
 
         tick_callback(tick_data)
 
-        # sleep for 1 second
-        # time.sleep(1)
+    # Stop providing data and remove the symbol from the symbols list
+    updated_symbols_list = [sym for sym in symbols if sym != symbol]
+    symbols = updated_symbols_list
 
 
 def save_tick_data_to_csv(tick_data, symbol: str):
@@ -554,157 +556,161 @@ def on_message(ws, message):
     else:
         data = json.loads(message)
 
-        # For Previous Tick Data
-        if "Request" in data.keys():
-            if "MessageType" in data["Request"].keys():
-                message_type = data["Request"]["MessageType"]
-                default_log.debug(f"MessageType: {message_type}")
-                if message_type == "GetExpiryDates":
+        try:
+            # For Previous Tick Data
+            if "Request" in data.keys():
+                if "MessageType" in data["Request"].keys():
+                    message_type = data["Request"]["MessageType"]
+                    default_log.debug(f"MessageType: {message_type}")
+                    if message_type == "GetExpiryDates":
 
-                    default_log.debug(f"Get Expiry Dates data received: {data}")
-                    index_symbol = data["Request"]["Product"]
+                        default_log.debug(f"Get Expiry Dates data received: {data}")
+                        index_symbol = data["Request"]["Product"]
 
-                    # Get the current date and the next Sunday
-                    today = datetime.datetime.now()
-                    next_sunday = today + datetime.timedelta(days=(6 - today.weekday()) % 7)
-                    default_log.debug(f"Next Sunday Date: {next_sunday}")
+                        # Get the current date and the next Sunday
+                        today = datetime.datetime.now()
+                        next_sunday = today + datetime.timedelta(days=(6 - today.weekday()) % 7)
+                        default_log.debug(f"Next Sunday Date: {next_sunday}")
 
-                    # Find the closest date after the next Sunday  # Entry BUY: CE SELL: PE NIFTY1950023DECCE
-                    # monday => next week sunday ke badh
-                    # Find the closest date to the next Sunday
+                        # Find the closest date after the next Sunday  # Entry BUY: CE SELL: PE NIFTY1950023DECCE
+                        # monday => next week sunday ke badh
+                        # Find the closest date to the next Sunday
 
-                    # Next Sunday Flow
-                    closest_date = min(
-                        (parse_date(item["Value"]) for item in data["Result"] if
-                         parse_date(item["Value"]) > next_sunday),
-                        key=lambda x: abs(x - next_sunday),
-                        default=None
-                    )
+                        # Next Sunday Flow
+                        closest_date = min(
+                            (parse_date(item["Value"]) for item in data["Result"] if
+                             parse_date(item["Value"]) > next_sunday),
+                            key=lambda x: abs(x - next_sunday),
+                            default=None
+                        )
 
-                    # Current Week Flow
-                    # closest_date = min(
-                    #     (parse_date(item["Value"]) for item in data["Result"] if today < parse_date(item["Value"]) < next_sunday),
-                    #     key=lambda x: abs(x - next_sunday),
-                    #     default=None
-                    # )
+                        # Current Week Flow
+                        # closest_date = min(
+                        #     (parse_date(item["Value"]) for item in data["Result"] if today < parse_date(item["Value"]) < next_sunday),
+                        #     key=lambda x: abs(x - next_sunday),
+                        #     default=None
+                        # )
 
-                    if index_symbol == "NIFTY":
-                        # check if next THURSDAY date from the closest date comes in the next month or not
-                        # if true then instead of storing expiry date as DATE+MONTH store it as MONTH
-                        next_week_date = closest_date + datetime.timedelta(days=7)
+                        if index_symbol == "NIFTY":
+                            # check if next THURSDAY date from the closest date comes in the next month or not
+                            # if true then instead of storing expiry date as DATE+MONTH store it as MONTH
+                            next_week_date = closest_date + datetime.timedelta(days=7)
 
-                        if next_week_date.month != today.month:
-                            default_log.debug(f"The next week date ({next_week_date}) is in the next month as of the "
-                                              f"closest date ({closest_date}) so storing expiry_date as "
-                                              f"MONTH without the date for index_symbol={index_symbol}")
+                            if next_week_date.month != today.month:
+                                default_log.debug(f"The next week date ({next_week_date}) is in the next month as of the "
+                                                  f"closest date ({closest_date}) so storing expiry_date as "
+                                                  f"MONTH without the date for index_symbol={index_symbol}")
 
-                            # expiry_date = str(closest_date.strftime('%b')).upper()
-                            expiry_date = NIFTY_INDEX_SYMBOL
+                                # expiry_date = str(closest_date.strftime('%b')).upper()
+                                expiry_date = NIFTY_INDEX_SYMBOL
 
+                            else:
+                                default_log.debug(f"The next week date ({next_week_date}) is in the same month as of the "
+                                                  f"closest date ({closest_date}) so storing expiry_date as "
+                                                  f"DATE+MONTH for index_symbol={index_symbol}")
+
+                                expiry_date = str(closest_date.strftime('%d%b')).upper()
+
+                                digits_list = [character for character in expiry_date if character.isnumeric()]
+                                digit_string = ''
+                                for digit in digits_list:
+                                    digit_string += digit
+                                default_log.debug(f"Digit formed: {digit_string} from {expiry_date}")
+
+                                expiry_date = NIFTY_INDEX_SYMBOL[:3] + digit_string
+
+                            default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
+
+                        elif index_symbol == "BANKNIFTY":
+                            # check if next WEDNESDAY/date from the closest date comes in the next month or not
+                            # if true then instead of storing expiry date as DATE+MONTH store it as MONTH
+                            next_week_date = closest_date + datetime.timedelta(days=7)
+
+                            if next_week_date.month != today.month:
+                                default_log.debug(f"The next week date ({next_week_date}) is in the next month as of the "
+                                                  f"closest date ({closest_date}) so storing expiry_date as "
+                                                  f"MONTH without the date for index_symbol={index_symbol}")
+
+                                # expiry_date = str(closest_date.strftime('%b')).upper()
+                                expiry_date = BANKNIFTY_INDEX_SYMBOL
+
+                            else:
+                                default_log.debug(f"The next week date ({next_week_date}) is in the same month as of the "
+                                                  f"closest date ({closest_date}) so storing expiry_date as "
+                                                  f"DATE+MONTH for index_symbol={index_symbol}")
+
+                                expiry_date = str(closest_date.strftime('%d%b')).upper()
+
+                                digits_list = [character for character in expiry_date if character.isnumeric()]
+                                digit_string = ''
+                                for digit in digits_list:
+                                    digit_string += digit
+                                default_log.debug(f"Digit formed: {digit_string} from {expiry_date}")
+
+                                expiry_date = NIFTY_INDEX_SYMBOL[:3] + digit_string
+
+                            default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
                         else:
-                            default_log.debug(f"The next week date ({next_week_date}) is in the same month as of the "
-                                              f"closest date ({closest_date}) so storing expiry_date as "
-                                              f"DATE+MONTH for index_symbol={index_symbol}")
-
                             expiry_date = str(closest_date.strftime('%d%b')).upper()
+                            default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
 
-                            digits_list = [character for character in expiry_date if character.isnumeric()]
-                            digit_string = ''
-                            for digit in digits_list:
-                                digit_string += digit
-                            default_log.debug(f"Digit formed: {digit_string} from {expiry_date}")
+                        nfo_expiry_date_dict[index_symbol] = expiry_date
 
-                            expiry_date = NIFTY_INDEX_SYMBOL[:3] + digit_string
+                        # Print the closest date
+                        default_log.debug(
+                            f"NFO expiry date={nfo_expiry_date_dict.get(index_symbol) if closest_date else 'No date found'}")
 
-                        default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
+                    elif message_type == "GetHistory":
+                        if "UserTag" in data["Request"].keys():
+                            periodicity, time_frame = data["Request"]["UserTag"].split(",")
 
-                    elif index_symbol == "BANKNIFTY":
-                        # check if next WEDNESDAY/date from the closest date comes in the next month or not
-                        # if true then instead of storing expiry date as DATE+MONTH store it as MONTH
-                        next_week_date = closest_date + datetime.timedelta(days=7)
+                            if periodicity == "MINUTE":  # for historical data
+                                instrument_symbol = data["Request"]["InstrumentIdentifier"]
 
-                        if next_week_date.month != today.month:
-                            default_log.debug(f"The next week date ({next_week_date}) is in the next month as of the "
-                                              f"closest date ({closest_date}) so storing expiry_date as "
-                                              f"MONTH without the date for index_symbol={index_symbol}")
+                                # if instrument_symbol.find("-I") != -1:
+                                instrument_symbol = instrument_symbol.split('-')[0]
 
-                            # expiry_date = str(closest_date.strftime('%b')).upper()
-                            expiry_date = BANKNIFTY_INDEX_SYMBOL
+                                time_frame = int(time_frame)
+                                if len(data['Result']) > 0:
+                                    # Last data is initial data of GLOBAL DATA FEED i.e. from_time
+                                    add_historical_data(
+                                        symbol=instrument_symbol,
+                                        time_frame=str(time_frame),
+                                        hist_data=[data["Result"][0]]
+                                    )
 
-                        else:
-                            default_log.debug(f"The next week date ({next_week_date}) is in the same month as of the "
-                                              f"closest date ({closest_date}) so storing expiry_date as "
-                                              f"DATE+MONTH for index_symbol={index_symbol}")
+                            elif periodicity == "TICK":
+                                InstIdentifier = data['Request']["InstrumentIdentifier"]
+                                default_log.debug(f"InstIdentifier for TICK data={InstIdentifier}")
+                                symbol = InstIdentifier.split('-')[0]
+                                default_log.debug(f"Actual symbol from {InstIdentifier} is => {symbol}")
+                                default_log.debug(f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
+                                ticks = data["Result"]
+                                if len(ticks) > 0:
+                                    if started_backtesting:
+                                        default_log.debug(f"Backing Testing in Progress so saving the ticks of symbol="
+                                                          f"{symbol} and replaying it")
+                                        threading.Thread(target=save_tick_data_to_csv, args=(ticks, symbol)).start()
+                                    else:
+                                        default_log.debug(f"Getting previous ALL ticks for "
+                                                          f"InstIdentifier={InstIdentifier} and "
+                                                          f"symbol={symbol}: {data['Result']}")
+                                        add_previous_tick_data(symbol=symbol,
+                                                               previous_tick_data=data['Result'])
 
-                            expiry_date = str(closest_date.strftime('%d%b')).upper()
-
-                            digits_list = [character for character in expiry_date if character.isnumeric()]
-                            digit_string = ''
-                            for digit in digits_list:
-                                digit_string += digit
-                            default_log.debug(f"Digit formed: {digit_string} from {expiry_date}")
-
-                            expiry_date = NIFTY_INDEX_SYMBOL[:3] + digit_string
-
-                        default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
-                    else:
-                        expiry_date = str(closest_date.strftime('%d%b')).upper()
-                        default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
-
-                    nfo_expiry_date_dict[index_symbol] = expiry_date
-
-                    # Print the closest date
-                    default_log.debug(
-                        f"NFO expiry date={nfo_expiry_date_dict.get(index_symbol) if closest_date else 'No date found'}")
-
-                elif message_type == "GetHistory":
-                    if "UserTag" in data["Request"].keys():
-                        periodicity, time_frame = data["Request"]["UserTag"].split(",")
-
-                        if periodicity == "MINUTE":  # for historical data
-                            instrument_symbol = data["Request"]["InstrumentIdentifier"]
-
-                            # if instrument_symbol.find("-I") != -1:
-                            instrument_symbol = instrument_symbol.split('-')[0]
-
-                            time_frame = int(time_frame)
-                            if len(data['Result']) > 0:
-                                # Last data is initial data of GLOBAL DATA FEED i.e. from_time
-                                add_historical_data(
-                                    symbol=instrument_symbol,
-                                    time_frame=str(time_frame),
-                                    hist_data=[data["Result"][0]]
-                                )
-
-                        elif periodicity == "TICK":
-                            InstIdentifier = data['Request']["InstrumentIdentifier"]
-                            default_log.debug(f"InstIdentifier for TICK data={InstIdentifier}")
-                            symbol = InstIdentifier.split('-')[0]
-                            default_log.debug(f"Actual symbol from {InstIdentifier} is => {symbol}")
-                            default_log.debug(f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
-                            ticks = data["Result"]
-                            if len(ticks) > 0:
-                                if started_backtesting:
-                                    default_log.debug(f"Backing Testing in Progress so saving the ticks of symbol="
-                                                      f"{symbol} and replaying it")
-                                    threading.Thread(target=save_tick_data_to_csv, args=(ticks, symbol)).start()
-                                else:
-                                    default_log.debug(f"Getting previous ALL ticks for "
-                                                      f"InstIdentifier={InstIdentifier} and "
-                                                      f"symbol={symbol}: {data['Result']}")
-                                    add_previous_tick_data(symbol=symbol,
-                                                           previous_tick_data=data['Result'])
-
-        elif "LastTradeTime" in data.keys():
-            default_log.debug(f"Data: {data}")
-            tick_callback(data)
+            elif "LastTradeTime" in data.keys():
+                default_log.debug(f"Data: {data}")
+                tick_callback(data)
+        except Exception as e:
+            default_log.debug(f"An error occurred while processing websocket response. Error: {e}")
 
 
 def on_error(ws, error):
-    default_log.debug("Error")
+    default_log.debug(f"Error: {error}")
 
 
-def on_close(ws):
+def on_close(ws, *args):
+    default_log.debug(f"inside websocket on_close with arguments={args}")
     default_log.debug("Reconnecting...")
     websocket.setdefaulttimeout(30)
     ws.connect(endpoint)
@@ -766,6 +772,7 @@ def get_global_data_feed_historical_data(
     global global_feedata_websocket
     global subscribed_nfo_symbols
     global historical_data
+    global started_backtesting
 
     default_log.debug(f"inside get_global_data_feed_historical_data with trading_symbol={trading_symbol} and "
                       f"time_frame={time_frame}, from_time={from_time} and to_time={to_time}")
@@ -810,6 +817,7 @@ def get_global_data_feed_historical_data(
         symbols.append(trading_symbol)
         SubscribeRealtime(ws=global_feedata_websocket, instrument_identifier=trading_symbol)
         default_log.debug(f"Started subscribing to Global Feed about symbol={trading_symbol}")
+        started_backtesting = False
 
         # LOGIC for getting previous ticks
         # Add previous ticks of the trading_symbol

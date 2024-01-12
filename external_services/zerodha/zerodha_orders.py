@@ -150,7 +150,12 @@ class KiteSandbox:
                           f"interval={interval} ")
 
         if use_truedata or use_global_feed:
-            symbol = symbol_tokens_map[instrument_token]
+            symbol = symbol_tokens_map.get(instrument_token, None)
+
+            if symbol is None:
+                inst_token = str(instrument_token)
+                symbol = get_symbol_for_instrument_token(inst_token)
+                default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
             time_frame = extract_integer_from_string(interval)
             # hist_data = td_app.get_historic_data(
             #     symbol,
@@ -352,6 +357,30 @@ def get_instrument_token_for_symbol(symbol: str, exchange: str = "NSE"):
     except Exception as e:
         default_log.debug(f"An error occurred while instrument token id for symbol={symbol} and "
                           f"exchange={exchange}. Error: {e}")
+        return None
+
+
+def get_symbol_for_instrument_token(instrument_token: str):
+    default_log.debug(f"inside get_symbol_for_instrument_token with instrument_token={instrument_token}")
+    instrument_token = int(instrument_token)
+    try:
+        file_path = f"instrument_tokens_of_zerodha_{datetime.now().date()}.csv"
+        instrument_tokens_df = pd.read_csv(file_path)
+
+        row_matching_instrument_token_df = instrument_tokens_df[
+            (instrument_tokens_df['instrument_token'] == instrument_token)]
+
+        if not row_matching_instrument_token_df.empty:
+            trading_symbol = row_matching_instrument_token_df.iloc[0]['tradingsymbol']
+            default_log.debug(f"Trading Symbol found for instrument_token={instrument_token}: {trading_symbol}")
+            return str(trading_symbol)
+        else:
+            default_log.debug(f"Trading Symbol not found for instrument_token={instrument_token}")
+            return None
+
+    except Exception as e:
+        default_log.debug(f"An error occurred while fetching trading_symbol for instrument_token={instrument_token}. "
+                          f"Error: {e}")
         return None
 
 
@@ -982,7 +1011,13 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
                       f"to_date={to_date} "
                       f"interval={interval} ")
     time_frame = extract_integer_from_string(interval)
-    symbol = symbol_tokens_map[instrument_token]
+    symbol = symbol_tokens_map.get(instrument_token, None)
+
+    if symbol is None:
+        inst_token = str(instrument_token)
+        symbol = get_symbol_for_instrument_token(inst_token)
+        default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
+
     try:
         if use_truedata or use_global_feed:
             # hist_data = td_app.get_historic_data(
@@ -1088,3 +1123,9 @@ def get_zerodha_order_details(kite: Union[KiteConnect, KiteSandbox], zerodha_ord
     except Exception as e:
         default_log.debug(f"An error occurred while fetching zerodha order details. Error={e}")
         return None
+
+
+if __name__ == "__main__":
+    symbol = get_symbol_for_instrument_token(str(738561))
+
+    default_log.debug(f"Symbol for instrument_token (738561) => {symbol}")

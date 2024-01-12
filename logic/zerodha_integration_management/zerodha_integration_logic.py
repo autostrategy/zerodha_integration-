@@ -28,7 +28,8 @@ from data.enums.trades import Trades
 from external_services.zerodha.zerodha_orders import place_zerodha_order_with_stop_loss, \
     place_zerodha_order_with_take_profit, update_zerodha_order_with_stop_loss, update_zerodha_order_with_take_profit, \
     get_kite_account_api, place_zerodha_order, get_historical_data, cancel_order, get_indices_symbol_for_trade, \
-    get_status_of_zerodha_order, get_zerodha_order_details, round_value, get_instrument_token_for_symbol
+    get_status_of_zerodha_order, get_zerodha_order_details, round_value, get_instrument_token_for_symbol, \
+    get_symbol_for_instrument_token
 from external_services.zerodha.zerodha_ticks_service import get_candlestick_data_using_ticker
 from logic.zerodha_integration_management.dtos.event_details_dto import EventDetailsDTO
 from logic.zerodha_integration_management.dtos.restart_event_dto import RestartEventDTO
@@ -565,7 +566,7 @@ def log_event_trigger(dto: CheckEventsDTO):
     #                   f"candle_time={dto.time_of_candle_formation} is {wait_time} "
     #                   f"seconds")
     symbol = dto.symbol
-    inst_token = instrument_tokens_map[dto.symbol]
+    inst_token = instrument_tokens_map.get(dto.symbol, None)
 
     exchange = "NFO" if symbol in indices_list else "NSE"
     if inst_token is None:
@@ -749,14 +750,20 @@ def get_next_data(
         interval: str,
         from_timestamp: datetime = None
 ):
+    symbol = symbol_tokens_map.get(instrument_token, None)
+
+    if symbol is None:
+        inst_token = str(instrument_token)
+        symbol = get_symbol_for_instrument_token(inst_token)
+        default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
+
     default_log.debug(f"inside get_next_data with "
                       f"is_restart={is_restart} "
                       f"timeframe={timeframe} "
                       f"instrument_token={instrument_token} "
                       f"interval={interval} "
                       f"from_timestamp={from_timestamp} "
-                      f"and symbol={symbol_tokens_map[instrument_token]}")
-    symbol = symbol_tokens_map[instrument_token]
+                      f"and symbol={symbol}")
 
     if is_restart:
         # wait_time = get_wait_time(timestamp, int(timeframe))

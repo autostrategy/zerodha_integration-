@@ -7,7 +7,7 @@ from data.enums.signal_type import SignalType
 
 
 class SingleEventDetailDTO(BaseModel):
-    date_time: datetime
+    date_time: Optional[datetime]
     symbol: str
     time_frame: str
     signal_type: Optional[SignalType]

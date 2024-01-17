@@ -12,7 +12,8 @@ from config import default_log, time_stamps, instrument_tokens_map
 from data.enums.configuration import Configuration
 from data.enums.signal_type import SignalType
 from decorators.handle_generic_exception import frontend_api_generic_exception
-from external_services.global_datafeed.get_data import download_tick_data_for_symbols, start_backtesting
+from external_services.global_datafeed.get_data import download_tick_data_for_symbols, start_backtesting, \
+    get_use_simulation_status
 from logic.zerodha_integration_management.get_event_details_logic import get_all_event_details
 from logic.zerodha_integration_management.zerodha_integration_logic import log_event_trigger
 from standard_responses.standard_json_response import standard_json_response
@@ -30,7 +31,9 @@ def check_event_triggers(
     default_log.debug(f"inside /add-event-check with dto={dto}")
 
     try:
-        log_event_trigger(dto)
+        use_simulation_status = get_use_simulation_status()
+        if not use_simulation_status:
+            log_event_trigger(dto)
         return standard_json_response(error=False, message="ok", data={})
     except Exception as e:
         default_log.debug(f"An error occurred while starting logging: {e}")
@@ -112,10 +115,10 @@ def add_csv_for_backtesting(
         data_df.to_csv(backtesting_data_df_filename, index=False)
 
         # Check if proper columns are present
-        columns_missing = [col for col in data_df.columns if col not in columns_to_check]
+        columns_missing = [col for col in columns_to_check if col not in data_df.columns]
         if len(columns_missing) > 0:
-            default_log.debug(f"The following columns are missing from the dataframe having columns ({data_df.columns})"
-                              f"={columns_missing}")
+            default_log.debug(f"The following columns {columns_missing} are missing from the dataframe having columns "
+                              f"({data_df.columns})")
             return standard_json_response(
                 error=True,
                 message=f"The following columns are missing: {columns_missing}",
@@ -124,6 +127,7 @@ def add_csv_for_backtesting(
 
         start_backtesting(backtesting_data_df_filename)
     except Exception as e:
+        default_log.debug(f"An error occurred while reading file. Error: {e}")
         return standard_json_response(
             error=True, 
             message="Error occurred while reading file",

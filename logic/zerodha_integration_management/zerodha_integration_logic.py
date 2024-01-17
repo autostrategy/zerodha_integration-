@@ -3,11 +3,11 @@ import threading
 
 import pytz
 
-from config import default_log, sandbox_mode, no_of_candles_to_consider, \
-    instrument_tokens_map, buffer_for_entry_trade, buffer_for_tp_trade, initial_start_range, initial_end_range, \
-    max_retries, trade1_loss_percent, trade2_loss_percent, trade3_loss_percent, indices_list, \
-    provide_ticker_data, symbol_tokens_map, use_truedata, use_global_feed, buffer_for_indices_entry_trade, \
-    buffer_for_indices_tp_trade, extension1_threshold_percent, extension2_threshold_percent
+from config import default_log, no_of_candles_to_consider, instrument_tokens_map, buffer_for_entry_trade, \
+    buffer_for_tp_trade, initial_start_range, initial_end_range, max_retries, trade1_loss_percent, \
+    trade2_loss_percent, trade3_loss_percent, indices_list, symbol_tokens_map, use_global_feed, \
+    buffer_for_indices_entry_trade, buffer_for_indices_tp_trade, extension1_threshold_percent, \
+    extension2_threshold_percent
 from typing import Optional
 
 import time as tm
@@ -25,12 +25,12 @@ from data.enums.budget_part import BudgetPart
 from data.enums.configuration import Configuration
 from data.enums.signal_type import SignalType
 from data.enums.trades import Trades
+from external_services.global_datafeed.get_data import get_use_simulation_status
 from external_services.zerodha.zerodha_orders import place_zerodha_order_with_stop_loss, \
     place_zerodha_order_with_take_profit, update_zerodha_order_with_stop_loss, update_zerodha_order_with_take_profit, \
     get_kite_account_api, place_zerodha_order, get_historical_data, cancel_order, get_indices_symbol_for_trade, \
     get_status_of_zerodha_order, get_zerodha_order_details, round_value, get_instrument_token_for_symbol, \
     get_symbol_for_instrument_token
-from external_services.zerodha.zerodha_ticks_service import get_candlestick_data_using_ticker
 from logic.zerodha_integration_management.dtos.event_details_dto import EventDetailsDTO
 from logic.zerodha_integration_management.dtos.restart_event_dto import RestartEventDTO
 from logic.zerodha_integration_management.dtos.timeframe_budget_and_trades_details_dto import \
@@ -72,12 +72,13 @@ def place_indices_market_order(
         signal_type: SignalType,
         entry_price: Optional[float] = None
 ):
-    # global kite
+    global use_simulation
     kite = get_kite_account_api()
     default_log.debug(f"Inside place_market_order with indices_symbol={indice_symbol} "
                       f"with quantity={quantity} and signal_type={signal_type} and entry_price={entry_price}")
 
-    if sandbox_mode:
+    use_simulation = get_use_simulation_status()
+    if use_simulation:
         order_id = place_zerodha_order(
             kite,
             trading_symbol=indice_symbol,
@@ -250,22 +251,7 @@ def get_budget_and_no_of_trade_details(
 
     # Check under which range the budget will lie
     points_range = calculate_points_range(dto.highest_point, dto.lowest_point)
-    # time_frame = dto.time_frame
-    # if time_frame is None:
-    #     key = 'default'
-    #     timeframe_budgets = timeframe_budget_dict.get(key, None)
-    #     if timeframe_budgets is None:
-    #         key = 'basic'
-    #         timeframe_budgets = timeframe_budget_dict.get(key)
-    #         timeframe_budget_and_trades_details_dto.budget = timeframe_budgets.budget
-    #         trades_to_make_dto = TradesToMakeDTO(
-    #             entry_trade=True,
-    #             extension1_trade=True,
-    #             extension2_trade=True
-    #         )
-    #         timeframe_budget_and_trades_details_dto.trades_to_make = trades_to_make_dto
-    #         return timeframe_budget_and_trades_details_dto
-    # else:
+
     key = dto.time_frame
     timeframe_budgets = timeframe_budget_dict.get(key, None)
     if timeframe_budgets is None:
@@ -615,7 +601,7 @@ def get_zerodha_data(
                           f"interval={interval} "
                           f"is_restart={is_restart} ")
 
-        market_symbol = ""
+        # market_symbol = ""
 
         # for k, v in instrument_tokens_map.items():
         #     if v == instrument_token:
@@ -663,7 +649,8 @@ def get_zerodha_data(
         # from_date = from_date.replace(second=0, microsecond=0, minute=0)
         # from_date = from_date - timedelta(hours=2)
 
-        if sandbox_mode:
+        use_simulation = get_use_simulation_status()
+        if use_simulation:
 
             kite_historical_data = kite.historical_data(
                 instrument_token=instrument_token,
@@ -676,32 +663,6 @@ def get_zerodha_data(
                 f"Historical Data returned: {kite_historical_data} for market_symbol={market_symbol} "
                 f"from {from_date} to {current_datetime} and "
                 f"interval={interval} ")
-
-        elif provide_ticker_data:
-            kite_historical_data = get_candlestick_data_using_ticker(
-                interval=str(time_frame),
-                symbol=market_symbol
-            )
-
-            if len(kite_historical_data) == 0:
-                default_log.debug(f"Kite Ticker data not found for symbol={market_symbol} and "
-                                  f"interval={interval}")
-                seconds_to_sleep = random.choice([1, 2, 3])
-                default_log.debug(f"sleeping {seconds_to_sleep} second/s to retry fetching of data")
-                tm.sleep(seconds_to_sleep)
-                continue
-
-            zerodha_historical_data = pd.DataFrame(kite_historical_data)
-
-            data = pd.DataFrame()
-
-            data['open'] = zerodha_historical_data['open']
-            data['high'] = zerodha_historical_data['high']
-            data['low'] = zerodha_historical_data['low']
-            data['close'] = zerodha_historical_data['close']
-            data['time'] = zerodha_historical_data['date']
-
-            return data
 
         else:
 
@@ -737,7 +698,7 @@ def get_zerodha_data(
         data['low'] = zerodha_historical_data['low']
         data['close'] = zerodha_historical_data['close']
 
-        if use_truedata or use_global_feed:
+        if use_global_feed:
             data['time'] = zerodha_historical_data['timestamp']
         else:
             data['time'] = zerodha_historical_data['date']
@@ -932,7 +893,8 @@ def trade_logic_sell(
     GREATEST_VALUE = MAX{(H1 - H[Signal Candle High]), (SL - H1)}
     TP = ENTRY PRICE - GREATEST_VALUE
     """
-
+    default_log.debug(f"inside trade_logic_sell with symbol={symbol} having time_frame={timeframe} and "
+                      f"candle_data={candle_data} and data_dictionary={data_dictionary}")
     key = (symbol, timeframe)
 
     event_data_dto = data_dictionary.get(key, False)
@@ -1184,7 +1146,8 @@ def trade_logic_buy(
     GREATEST_VALUE = MAX{(L1 - L[Signal Candle Low]), (SL - L1)}
     TP = ENTRY PRICE + GREATEST_VALUE
     """
-
+    default_log.debug(f"inside trade_logic_buy with symbol={symbol} having time_frame={timeframe} and "
+                      f"candle_data={candle_data} and data_dictionary={data_dictionary}")
     key = (symbol, timeframe)
 
     event_data_dto = data_dictionary.get(key, False)
@@ -1511,8 +1474,9 @@ def place_initial_zerodha_trades(
     event_data_dto.trade1_quantity = trade1_quantity
     extra_extension_quantity = event_data_dto.extension_quantity
 
+    use_simulation = get_use_simulation_status()
     # Start trade
-    if sandbox_mode:
+    if use_simulation:
         entry_trade_order_id = place_zerodha_order(
             kite=kite,
             trading_symbol=symbol if indices_symbol is None else indices_symbol,
@@ -1677,7 +1641,8 @@ def place_initial_zerodha_trades(
                       f"trading_symbol={symbol}, transaction_type as {sl_transaction_type} "
                       f"with quantity={trade1_quantity} and stop_loss={stop_loss} ")
 
-    if sandbox_mode:
+    use_simulation = get_use_simulation_status()
+    if use_simulation:
         # Place a ZERODHA order with stop loss
         sl_order_id = place_zerodha_order_with_stop_loss(
             kite=kite,
@@ -1718,8 +1683,9 @@ def place_initial_zerodha_trades(
                       f"trading_symbol={symbol}, transaction_type as {tp_transaction_type} "
                       f"with quantity={trade1_quantity} and take_profit={take_profit} ")
 
+    use_simulation = get_use_simulation_status()
     # Place a ZERODHA order with take profit
-    if sandbox_mode:
+    if use_simulation:
         tp_order_id = place_zerodha_order_with_take_profit(
             kite=kite,
             trading_symbol=symbol if indices_symbol is None else indices_symbol,
@@ -1788,8 +1754,9 @@ def place_extension_zerodha_trades(
     sl_order_id = event_data_dto.sl_order_id
     tp_order_id = event_data_dto.tp_order_id
 
+    use_simulation = get_use_simulation_status()
     # Start trade
-    if sandbox_mode:
+    if use_simulation:
         average_price = candle_data['low'] if signal_type == SignalType.SELL else candle_data['high']
         extension_trade_order_id = place_zerodha_order(
             kite=kite,
@@ -2018,7 +1985,8 @@ def place_extension_zerodha_trades(
                           f"with quantity={sl_quantity} and stop_loss={stop_loss}"
                           f"exchange={exchange}")
 
-        if sandbox_mode:
+        use_simulation = get_use_simulation_status()
+        if use_simulation:
             sl_order_id = place_zerodha_order_with_stop_loss(
                 kite=kite,
                 quantity=sl_quantity,
@@ -2056,8 +2024,9 @@ def place_extension_zerodha_trades(
                           f"with quantity={tp_quantity} and "
                           f"exchange={exchange}")
 
+        use_simulation = get_use_simulation_status()
         # Update a ZERODHA order with take profit
-        if sandbox_mode:
+        if use_simulation:
             tp_order_id = place_zerodha_order_with_take_profit(
                 kite=kite,
                 transaction_type=tp_transaction_type,
@@ -2098,9 +2067,10 @@ def place_extension_zerodha_trades(
                       f"with quantity={sl_quantity} "
                       f"exchange={exchange}")
 
+    use_simulation = get_use_simulation_status()
     # Add stop loss and take profit while updating the SL-M and LIMIT order
     # Update a ZERODHA order with stop loss quantity
-    if sandbox_mode:
+    if use_simulation:
         sl_order_id = update_zerodha_order_with_stop_loss(
             kite=kite,
             zerodha_order_id=sl_order_id,
@@ -2142,8 +2112,9 @@ def place_extension_zerodha_trades(
                       f"with quantity={tp_quantity} and "
                       f"exchange={exchange}")
 
+    use_simulation = get_use_simulation_status()
     # Update a ZERODHA order with take profit
-    if sandbox_mode:
+    if use_simulation:
         tp_order_id = update_zerodha_order_with_take_profit(
             kite=kite,
             zerodha_order_id=tp_order_id,
@@ -2208,9 +2179,9 @@ def update_zerodha_stop_loss_order(event_data_dto: EventDetailsDTO, indices_symb
     stop_loss = formatted_value
 
     # event_data_dto.sl_value = stop_loss
-
+    use_simulation = get_use_simulation_status()
     quantity = event_data_dto.trade1_quantity if event_data_dto.extension_quantity is None else event_data_dto.extension_quantity
-    if sandbox_mode:
+    if use_simulation:
         default_log.debug(f"Updating Zerodha SL order with id={event_data_dto.sl_order_id} having market order "
                           f"id={event_data_dto.entry_trade_order_id} stop_loss to {stop_loss}")
 
@@ -2928,7 +2899,8 @@ def start_market_logging_for_buy(
 
                 # dto.tp_values[-1].tp_value = take_profit
                 dto.tp_values[-1].tp_with_buffer = take_profit
-                if sandbox_mode:
+                use_simulation = get_use_simulation_status()
+                if use_simulation:
                     default_log.debug(f"Updating Zerodha TP order with id={dto.tp_order_id} having market order "
                                       f"id={dto.entry_trade_order_id} take_profit to {take_profit}")
 
@@ -3011,9 +2983,10 @@ def start_market_logging_for_buy(
                     sl_got_extended = True
 
                     if indices_symbol is None:
+                        use_simulation = get_use_simulation_status()
                         # Only updating SL order when indices symbol is None
                         # as for indices symbol SL-M order is not placed
-                        if sandbox_mode:
+                        if use_simulation:
                             candle_high = data.iloc[-1]["high"]
                             candle_low = data.iloc[-1]["low"]
                             event_data_dto = update_zerodha_stop_loss_order(
@@ -3048,9 +3021,10 @@ def start_market_logging_for_buy(
                     dto.sl_value = average_entry_price
 
                     if indices_symbol is None:
+                        use_simulation = get_use_simulation_status()
                         # Only updating SL order when indices symbol is None
                         # as for indices symbol SL-M order is not placed
-                        if sandbox_mode:
+                        if use_simulation:
                             candle_high = data.iloc[-1]["high"]
                             candle_low = data.iloc[-1]["low"]
                             event_data_dto = update_zerodha_stop_loss_order(
@@ -4493,7 +4467,8 @@ def start_market_logging_for_sell(
 
                 # dto.tp_values[-1].tp_value = take_profit
                 dto.tp_values[-1].tp_with_buffer = take_profit
-                if sandbox_mode:
+                use_simulation = get_use_simulation_status()
+                if use_simulation:
                     default_log.debug(f"Updating Zerodha TP order with id={dto.tp_order_id} having market order "
                                       f"id={dto.entry_trade_order_id} take_profit to {take_profit}")
                     tp_order_id = update_zerodha_order_with_take_profit(
@@ -4562,7 +4537,8 @@ def start_market_logging_for_sell(
                     if indices_symbol is None:
                         # Only updating SL order when indices symbol is None
                         # as for indices symbol SL-M order is not placed
-                        if sandbox_mode:
+                        use_simulation = get_use_simulation_status()
+                        if use_simulation:
                             candle_high = data.iloc[-1]["high"]
                             candle_low = data.iloc[-1]["low"]
                             event_data_dto = update_zerodha_stop_loss_order(
@@ -4599,7 +4575,8 @@ def start_market_logging_for_sell(
                     if indices_symbol is None:
                         # Only updating SL order when indices symbol is None
                         # as for indices symbol SL-M order is not placed
-                        if sandbox_mode:
+                        use_simulation = get_use_simulation_status()
+                        if use_simulation:
                             candle_high = data.iloc[-1]["high"]
                             candle_low = data.iloc[-1]["low"]
                             event_data_dto = update_zerodha_stop_loss_order(

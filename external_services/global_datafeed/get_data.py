@@ -9,8 +9,7 @@ import asyncio
 import pandas as pd
 
 from api.event_management.dtos.check_events_dto import CheckEventsDTO
-from config import default_log, sandbox_mode, indices_list, endpoint, accesskey, NIFTY_INDEX_SYMBOL, \
-    BANKNIFTY_INDEX_SYMBOL
+from config import default_log, indices_list, endpoint, accesskey, sandbox_mode
 
 import websocket
 
@@ -30,16 +29,23 @@ symbols_interval_data = dict()
 
 symbols = []
 
-counter = 0
 dataframe = pd.DataFrame()
 
 global_feedata_websocket = None
+
 nfo_expiry_date_dict = dict()
-subscribed_nfo_symbols = ["NIFTY"]
+subscribed_nfo_symbols = []
+
 historical_data = dict()
 trade_alerts_df = pd.DataFrame()
 
-started_backtesting = False
+started_backtesting = sandbox_mode
+
+
+def get_use_simulation_status():
+    default_log.debug(f"inside get_use_simulation_status. Current backtesting status is = {started_backtesting} "
+                      f"Returning the Current backtesting status ({started_backtesting})")
+    return started_backtesting
 
 
 def start_backtesting(filename: str):
@@ -60,6 +66,16 @@ def download_tick_data_for_symbols(backtest_date: datetime.date, symbols_list: l
     global global_feedata_websocket
     global symbols
 
+    # Check if some active realtime symbols are already present in the symbols list
+    # if yes then unsubscribe all
+    if len(symbols) > 0:
+        default_log.debug(f"Unsubscribing from Realtime data for all the following symbols={symbols}")
+
+        # iterate through each symbols
+        for sym in symbols:
+            default_log.debug(f"Unsubscribing from Realtime {sym} tick data")
+            SubscribeRealtime(ws=global_feedata_websocket, instrument_identifier=sym, stop_subscribing=True)
+
     symbols_clean_list = [sym.split('-')[0] for sym in symbols_list]
     symbols.extend(symbols_clean_list)
 
@@ -67,7 +83,8 @@ def download_tick_data_for_symbols(backtest_date: datetime.date, symbols_list: l
                       f"{backtest_date} and symbols_list={symbols_list}")
     # Convert date to ist datetime with starting time as 09:30:00+05:30
     desired_start_time = datetime.time(9, 30)
-    from_time_in_ist = datetime.datetime.combine(backtest_date, desired_start_time, tzinfo=pytz.timezone("Asia/Kolkata"))
+    from_time_in_ist = datetime.datetime.combine(backtest_date, desired_start_time,
+                                                 tzinfo=pytz.timezone("Asia/Kolkata"))
 
     from_time_in_epochs = str(int(from_time_in_ist.timestamp()))
 
@@ -191,7 +208,8 @@ def feed_ticks_of_symbol(symbol: str):
         tick_callback(tick_data)
 
     # Stop providing data and remove the symbol from the symbols list
-    updated_symbols_list = [sym for sym in symbols if sym != symbol]
+    clean_symbol = symbol.split('-')[0]
+    updated_symbols_list = [sym for sym in symbols if sym != clean_symbol]
     symbols = updated_symbols_list
 
 
@@ -254,45 +272,22 @@ def process_symbol_ticks(symbol, time_frame):
     data = dict()
 
     # Loop through the ticks of the symbol
-    if sandbox_mode:
-        for company_data in symbol_tick:
-            symbol = company_data["InstrumentIdentifier"]
+    for company_data in symbol_tick:
+        symbol = company_data["InstrumentIdentifier"]
 
-            symbol = symbol.split('-')[0]
+        symbol = symbol.split('-')[0]
 
-            # symbol = "NIFTY" if symbol == "NIFTY-I" else symbol
-            # symbol = "BANKNIFTY" if symbol == "BANKNIFTY-I" else symbol
+        ltp = company_data["LastTradePrice"]
+        epoch_timestamp = company_data.timestamp if type(company_data) != dict else company_data["LastTradeTime"]
+        utc_timestamp = datetime.datetime.utcfromtimestamp(epoch_timestamp).replace(
+            tzinfo=datetime.timezone.utc)
 
-            ltp = company_data["LastTradePrice"]
-            epoch_timestamp = company_data.timestamp if type(company_data) != dict else company_data["LastTradeTime"]
-            utc_timestamp = datetime.datetime.utcfromtimestamp(epoch_timestamp).replace(
-                tzinfo=datetime.timezone.utc)
+        # Convert UTC to IST
+        ist = pytz.timezone('Asia/Kolkata')
+        timestamp_ist = utc_timestamp.astimezone(ist)
+        timestamp = timestamp_ist
 
-            # Convert UTC to IST
-            ist = pytz.timezone('Asia/Kolkata')
-            timestamp_ist = utc_timestamp.astimezone(ist)
-            timestamp = timestamp_ist
-
-            data[timestamp] = [timestamp, symbol, ltp]
-    else:
-        for company_data in symbol_tick:
-            symbol = company_data.symbol if type(company_data) != dict else company_data["InstrumentIdentifier"]
-
-            symbol = symbol.split('-')[0]
-            # symbol = "NIFTY" if symbol == "NIFTY-I" else symbol
-            # symbol = "BANKNIFTY" if symbol == "BANKNIFTY-I" else symbol
-
-            ltp = company_data.ltp if type(company_data) != dict else company_data["LastTradePrice"]
-            epoch_timestamp = company_data.timestamp if type(company_data) != dict else company_data["LastTradeTime"]
-            utc_timestamp = datetime.datetime.utcfromtimestamp(epoch_timestamp).replace(
-                tzinfo=datetime.timezone.utc)
-
-            # Convert UTC to IST
-            ist = pytz.timezone('Asia/Kolkata')
-            timestamp_ist = utc_timestamp.astimezone(ist)
-            timestamp = timestamp_ist
-
-            data[timestamp] = [timestamp, symbol, ltp]
+        data[timestamp] = [timestamp, symbol, ltp]
 
     tick_df = pd.DataFrame(data.values(), columns=df_cols, index=data.keys())
 
@@ -350,7 +345,7 @@ def tick_callback(tick_data):
     symbol_intervals = symbols_interval_data.get(symbol, {})
 
     time_frames = symbol_intervals.keys()
-    default_log.debug(f"Timeframes for symbol={symbol}={time_frames}")
+    default_log.debug(f"Timeframes for symbol={symbol} having timeframe keys={time_frames}")
     for time_frame in time_frames:
         threading.Thread(target=process_symbol_ticks, args=(symbol, time_frame)).start()
 
@@ -457,8 +452,10 @@ def Authenticate(ws):
     ws.send('{"MessageType":"Authenticate","Password":"' + accesskey + '"}')
 
 
-def SubscribeRealtime(ws, instrument_identifier: str):
-    default_log.debug(f"inside SubscribeRealtime with instrument_identifier={instrument_identifier}")
+def SubscribeRealtime(ws, instrument_identifier: str, stop_subscribing: bool = False):
+    global symbols
+    default_log.debug(f"inside SubscribeRealtime with instrument_identifier={instrument_identifier} and "
+                      f"stop_subscribing={stop_subscribing}")
 
     # ExchangeName = "NSE" if instrument_identifier not in indices_list else "NFO"
     ExchangeName = "NFO"
@@ -469,7 +466,15 @@ def SubscribeRealtime(ws, instrument_identifier: str):
     # InstIdentifier = "NIFTY-I" if instrument_identifier == "NIFTY" else instrument_identifier
     # InstIdentifier = "BANKNIFTY-I" if instrument_identifier == "BANKNIFTY" else InstIdentifier
 
-    Unsubscribe = "false"  # GFDL : To stop data subscription for this symbol, send this value as "true"
+    Unsubscribe = "true" if stop_subscribing else "false"  # GFDL : To stop data subscription for this symbol,
+    # send this value as "true"
+
+    if stop_subscribing:
+        # Remove the symbol from the symbols list
+        updated_symbols = [sym for sym in symbols if sym != instrument_identifier]
+        default_log.debug(f"Updating the symbols list after removing {instrument_identifier} from the original symbols "
+                          f"list ({symbols}) and updating the symbols list to={updated_symbols}")
+        symbols = updated_symbols
 
     strMessage = '{"MessageType":"SubscribeRealtime","Exchange":"' + ExchangeName + '","Unsubscribe":"' + Unsubscribe + '","InstrumentIdentifier":"' + InstIdentifier + '"}'
     default_log.debug('Message : ' + strMessage)
@@ -563,105 +568,7 @@ def on_message(ws, message):
                 if "MessageType" in data["Request"].keys():
                     message_type = data["Request"]["MessageType"]
                     default_log.debug(f"MessageType: {message_type}")
-                    if message_type == "GetExpiryDates":
-
-                        default_log.debug(f"Get Expiry Dates data received: {data}")
-                        index_symbol = data["Request"]["Product"]
-
-                        # Get the current date and the next Sunday
-                        today = datetime.datetime.now()
-                        next_sunday = today + datetime.timedelta(days=(6 - today.weekday()) % 7)
-                        default_log.debug(f"Next Sunday Date: {next_sunday}")
-
-                        # Find the closest date after the next Sunday  # Entry BUY: CE SELL: PE NIFTY1950023DECCE
-                        # monday => next week sunday ke badh
-                        # Find the closest date to the next Sunday
-
-                        # Next Sunday Flow
-                        closest_date = min(
-                            (parse_date(item["Value"]) for item in data["Result"] if
-                             parse_date(item["Value"]) > next_sunday),
-                            key=lambda x: abs(x - next_sunday),
-                            default=None
-                        )
-
-                        # Current Week Flow
-                        # closest_date = min(
-                        #     (parse_date(item["Value"]) for item in data["Result"] if today < parse_date(item["Value"]) < next_sunday),
-                        #     key=lambda x: abs(x - next_sunday),
-                        #     default=None
-                        # )
-
-                        if index_symbol == "NIFTY":
-                            # check if next THURSDAY date from the closest date comes in the next month or not
-                            # if true then instead of storing expiry date as DATE+MONTH store it as MONTH
-                            next_week_date = closest_date + datetime.timedelta(days=7)
-
-                            if next_week_date.month != today.month:
-                                default_log.debug(f"The next week date ({next_week_date}) is in the next month as of the "
-                                                  f"closest date ({closest_date}) so storing expiry_date as "
-                                                  f"MONTH without the date for index_symbol={index_symbol}")
-
-                                # expiry_date = str(closest_date.strftime('%b')).upper()
-                                expiry_date = NIFTY_INDEX_SYMBOL
-
-                            else:
-                                default_log.debug(f"The next week date ({next_week_date}) is in the same month as of the "
-                                                  f"closest date ({closest_date}) so storing expiry_date as "
-                                                  f"DATE+MONTH for index_symbol={index_symbol}")
-
-                                expiry_date = str(closest_date.strftime('%d%b')).upper()
-
-                                digits_list = [character for character in expiry_date if character.isnumeric()]
-                                digit_string = ''
-                                for digit in digits_list:
-                                    digit_string += digit
-                                default_log.debug(f"Digit formed: {digit_string} from {expiry_date}")
-
-                                expiry_date = NIFTY_INDEX_SYMBOL[:3] + digit_string
-
-                            default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
-
-                        elif index_symbol == "BANKNIFTY":
-                            # check if next WEDNESDAY/date from the closest date comes in the next month or not
-                            # if true then instead of storing expiry date as DATE+MONTH store it as MONTH
-                            next_week_date = closest_date + datetime.timedelta(days=7)
-
-                            if next_week_date.month != today.month:
-                                default_log.debug(f"The next week date ({next_week_date}) is in the next month as of the "
-                                                  f"closest date ({closest_date}) so storing expiry_date as "
-                                                  f"MONTH without the date for index_symbol={index_symbol}")
-
-                                # expiry_date = str(closest_date.strftime('%b')).upper()
-                                expiry_date = BANKNIFTY_INDEX_SYMBOL
-
-                            else:
-                                default_log.debug(f"The next week date ({next_week_date}) is in the same month as of the "
-                                                  f"closest date ({closest_date}) so storing expiry_date as "
-                                                  f"DATE+MONTH for index_symbol={index_symbol}")
-
-                                expiry_date = str(closest_date.strftime('%d%b')).upper()
-
-                                digits_list = [character for character in expiry_date if character.isnumeric()]
-                                digit_string = ''
-                                for digit in digits_list:
-                                    digit_string += digit
-                                default_log.debug(f"Digit formed: {digit_string} from {expiry_date}")
-
-                                expiry_date = NIFTY_INDEX_SYMBOL[:3] + digit_string
-
-                            default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
-                        else:
-                            expiry_date = str(closest_date.strftime('%d%b')).upper()
-                            default_log.debug(f"NFO expiry date for {index_symbol} is {expiry_date}")
-
-                        nfo_expiry_date_dict[index_symbol] = expiry_date
-
-                        # Print the closest date
-                        default_log.debug(
-                            f"NFO expiry date={nfo_expiry_date_dict.get(index_symbol) if closest_date else 'No date found'}")
-
-                    elif message_type == "GetHistory":
+                    if message_type == "GetHistory":
                         if "UserTag" in data["Request"].keys():
                             periodicity, time_frame = data["Request"]["UserTag"].split(",")
 
@@ -685,7 +592,8 @@ def on_message(ws, message):
                                 default_log.debug(f"InstIdentifier for TICK data={InstIdentifier}")
                                 symbol = InstIdentifier.split('-')[0]
                                 default_log.debug(f"Actual symbol from {InstIdentifier} is => {symbol}")
-                                default_log.debug(f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
+                                default_log.debug(
+                                    f"Previous Tick data for symbol={InstIdentifier} is: {data['Result']}")
                                 ticks = data["Result"]
                                 if len(ticks) > 0:
                                     if started_backtesting:
@@ -749,7 +657,6 @@ def start_global_data_feed_server():
     websocket_thread.start()
 
     time.sleep(5)  # sleep for 5 seconds till global data server is started and authenticated
-    GetExpiryDates(ws=global_feedata_websocket, index_symbol="NIFTY")
 
 
 def get_nfo_closest_expiry_date(index_symbol: str):
@@ -777,13 +684,6 @@ def get_global_data_feed_historical_data(
 
     default_log.debug(f"inside get_global_data_feed_historical_data with trading_symbol={trading_symbol} and "
                       f"time_frame={time_frame}, from_time={from_time} and to_time={to_time}")
-
-    # if trading_symbol in indices_list:
-    #     if trading_symbol not in subscribed_nfo_symbols:
-    #         subscribed_nfo_symbols.append(trading_symbol)
-    #         GetExpiryDates(ws=global_feedata_websocket, index_symbol=trading_symbol)
-    #         default_log.debug(
-    #             f"Fetching Expiry dates for index_symbol={trading_symbol} from Global Feed")
 
     if from_time is not None:
         key = (trading_symbol, int(time_frame))

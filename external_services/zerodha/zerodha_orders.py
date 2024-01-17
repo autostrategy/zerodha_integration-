@@ -7,7 +7,7 @@ import pandas as pd
 import pytz
 from kiteconnect import KiteConnect
 
-from config import sandbox_mode, zerodha_api_key, use_truedata, symbol_tokens_map, use_global_feed, \
+from config import zerodha_api_key, symbol_tokens_map, use_global_feed, \
     zerodha_access_token, zerodha_api_secret
 from typing_extensions import Union
 
@@ -15,8 +15,7 @@ from config import default_log, instrument_tokens_map
 from data.enums.signal_type import SignalType
 import requests
 
-from external_services.global_datafeed.get_data import get_global_data_feed_historical_data
-from external_services.truedata.truedata_external_service import get_truedata_historical_data
+from external_services.global_datafeed.get_data import get_global_data_feed_historical_data, get_use_simulation_status
 
 provide_historical_data = False
 provide_minute_data = True
@@ -149,7 +148,7 @@ class KiteSandbox:
                           f"to_date={to_date} "
                           f"interval={interval} ")
 
-        if use_truedata or use_global_feed:
+        if use_global_feed:
             symbol = symbol_tokens_map.get(instrument_token, None)
 
             if symbol is None:
@@ -157,29 +156,16 @@ class KiteSandbox:
                 symbol = get_symbol_for_instrument_token(inst_token)
                 default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
             time_frame = extract_integer_from_string(interval)
-            # hist_data = td_app.get_historic_data(
-            #     symbol,
-            #     start_time=from_date,
-            #     end_time=to_date,
-            #     bar_size=interval,
-            #     options={'data_type': 'json'}
-            # )
 
-            if use_truedata:
-                hist_data = get_truedata_historical_data(
-                    trading_symbol=symbol,
-                    time_frame=int(time_frame)
-                )
-            else:
-                hist_data = get_global_data_feed_historical_data(
-                    trading_symbol=symbol,
-                    time_frame=int(time_frame),
-                    from_time=from_date,
-                    to_time=to_date
-                )
+            hist_data = get_global_data_feed_historical_data(
+                            trading_symbol=symbol,
+                            time_frame=int(time_frame),
+                            from_time=from_date,
+                            to_time=to_date
+                        )
 
             default_log.debug(
-                f"[LIVE] True Data historical data returned for symbol={symbol} and time_frame={interval} "
+                f"[LIVE] Gobal Data Feed historical data returned for symbol={symbol} and time_frame={interval} "
                 f"from {from_date} to {to_date}: {hist_data}")
 
             if len(hist_data) == 0:
@@ -677,7 +663,8 @@ def get_official_kite_account_api():
 
 # Get Kite Account
 def get_kite_account_api():
-    if sandbox_mode:
+    use_simulation = get_use_simulation_status()
+    if use_simulation:
         kite = KiteSandbox()
     else:
         kite = KiteConnect(api_key=zerodha_api_key)
@@ -1019,30 +1006,17 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
         default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
 
     try:
-        if use_truedata or use_global_feed:
-            # hist_data = td_app.get_historic_data(
-            #     symbol,
-            #     start_time=from_date,
-            #     end_time=to_date,
-            #     bar_size=interval,
-            #     options={'data_type': 'json'}
-            # )
+        if use_global_feed:
 
-            if use_truedata:
-                hist_data = get_truedata_historical_data(
-                    trading_symbol=symbol,
-                    time_frame=int(time_frame)
-                )
-            else:
-                hist_data = get_global_data_feed_historical_data(
-                    trading_symbol=symbol,
-                    time_frame=int(time_frame),
-                    from_time=from_date,
-                    to_time=to_date
-                )
+            hist_data = get_global_data_feed_historical_data(
+                            trading_symbol=symbol,
+                            time_frame=int(time_frame),
+                            from_time=from_date,
+                            to_time=to_date
+                        )
 
             default_log.debug(
-                f"[LIVE] True Data historical data returned for symbol={symbol} and time_frame={interval} "
+                f"[LIVE] Global Data Feed historical data returned for symbol={symbol} and time_frame={interval} "
                 f"from {from_date} to {to_date}: {hist_data}")
 
             if len(hist_data) == 0:

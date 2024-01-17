@@ -52,6 +52,8 @@ def add_thread_event_details(dto: EventThreadDetailsDTO, session=None, commit=Tr
         default_log.debug("Flushing thread event details")
         db.flush()
 
+    default_log.debug(f"Returning new thread details id for symbol={dto.symbol} having timeframe={dto.time_frame}: "
+                      f"{new_thread_details.id}")
     return new_thread_details.id
 
 

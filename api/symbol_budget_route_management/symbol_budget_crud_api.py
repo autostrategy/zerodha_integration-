@@ -10,9 +10,9 @@ from data.dbapi.symbol_budget_dbapi.read_queries import get_symbol_budget_by_id
 from data.dbapi.timeframe_budgets_dbapi.read_queries import get_timeframe_budget_by_id
 from decorators.handle_generic_exception import frontend_api_generic_exception
 from logic.budget_setting_management.budget_setting_logic import add_budget_setting, modify_budget_setting, \
-    get_all_timeframe_budget_logic
-from logic.symbol_budget_management.symbol_budget_logic import add_symbol_budget_data, update_symbol_budget_data, \
-    get_all_symbol_budget_logic
+    get_all_timeframe_budget_logic, delete_timeframe_budget_logic
+from logic.symbol_budget_management.symbol_budget_logic import add_symbol_budget_data, delete_symbol_budget_logic, \
+    update_symbol_budget_data, get_all_symbol_budget_logic
 from standard_responses.standard_json_response import standard_json_response
 
 
@@ -29,9 +29,9 @@ def add_symbol_budget_route(
 
     response = add_symbol_budget_data(dto)
 
-    if not response:
+    if response.error:
         default_log.debug(f"An error occurred while adding symbol budget with dto={dto}")
-        return standard_json_response(error=True, message="An error occurred while adding symbol budget", data={})
+        return standard_json_response(error=True, message=response.error_message, data={})
 
     default_log.debug(f"Added symbol budget with dto={dto}")
     return standard_json_response(error=False, message="Added symbol budget", data={})
@@ -77,6 +77,38 @@ def get_all_budget_setting_route(
     return standard_json_response(error=False, message="ok", data=jsonable_encoder(response))
 
 
+@symbol_budget_router.delete("/delete-symbol-budget")
+def delete_budget_setting_route(
+        symbol_budget_id: int,
+        request: Request
+):
+    default_log.debug(f"inside /delete-symbol-budget with symbol_budget_id={symbol_budget_id}")
+
+    # Check if budget_setting exists for the given id
+    timeframe_budget = get_symbol_budget_by_id(symbol_budget_id)
+
+    if timeframe_budget is None:
+        default_log.debug(f"Symbol budget does not exists for the id={symbol_budget_id}")
+        return standard_json_response(
+            error=True,
+            message="Symbol budget does not exists",
+            data={}
+        )
+
+    response = delete_symbol_budget_logic(symbol_budget_id)
+
+    if not response:
+        default_log.debug(f"An error occurred while deleting symbol_budget having id={symbol_budget_id}")
+        return standard_json_response(
+            error=True,
+            message="An error occurred while deleting symbol budget",
+            data={}
+        )
+
+    default_log.debug(f"Deleted the symbol_budget having id={symbol_budget_id}")
+    return standard_json_response(error=False, message="ok", data={})
+
+
 @symbol_budget_router.post("/add-budget-setting")
 def add_budget_setting_route(
         request: Request,
@@ -86,9 +118,10 @@ def add_budget_setting_route(
 
     response = add_budget_setting(dto)
 
-    if not response:
-        default_log.debug(f"An error occurred while adding budget setting with dto={dto}")
-        return standard_json_response(error=True, message="An error occurred while adding budget setting", data={})
+    if response.error:
+        default_log.debug(f"An error occurred while adding budget setting with dto={dto}. "
+                          f"Error={response.error_message}")
+        return standard_json_response(error=True, message=response.error_message, data={})
 
     default_log.debug(f"Added symbol budget with dto={dto}")
     return standard_json_response(error=False, message="Added budget setting", data={})
@@ -126,8 +159,44 @@ def get_all_budget_setting_route(
     response = get_all_timeframe_budget_logic()
 
     if response is None:
-        default_log.debug("An error occurred while getting all symbol budget")
-        return standard_json_response(error=True, message="An error occurred while getting all symbol budget", data={})
+        default_log.debug("An error occurred while getting all budget settings")
+        return standard_json_response(
+            error=True,
+            message="An error occurred while getting all budget settings",
+            data={}
+        )
 
     default_log.debug(f"Fetched all budget_settings = {response}")
     return standard_json_response(error=False, message="ok", data=jsonable_encoder(response))
+
+
+@symbol_budget_router.delete("/delete-budget-setting")
+def delete_budget_setting_route(
+        budget_setting_id: int,
+        request: Request
+):
+    default_log.debug(f"inside /delete-budget-setting with budget_setting_id={budget_setting_id}")
+
+    # Check if budget_setting exists for the given id
+    timeframe_budget = get_timeframe_budget_by_id(budget_setting_id)
+
+    if timeframe_budget is None:
+        default_log.debug(f"Timeframe budget does not exists for the id={budget_setting_id}")
+        return standard_json_response(
+            error=True,
+            message="Timeframe budget does not exists",
+            data={}
+        )
+
+    response = delete_timeframe_budget_logic(budget_setting_id)
+
+    if not response:
+        default_log.debug(f"An error occurred while deleting budget_setting having id={budget_setting_id}")
+        return standard_json_response(
+            error=True,
+            message="An error occurred while deleting budget setting",
+            data={}
+        )
+
+    default_log.debug(f"Deleted the budget_setting having id={budget_setting_id}")
+    return standard_json_response(error=False, message="ok", data={})

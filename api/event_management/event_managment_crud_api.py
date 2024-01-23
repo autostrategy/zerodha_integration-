@@ -33,7 +33,10 @@ def check_event_triggers(
     try:
         use_simulation_status = get_use_simulation_status()
         if not use_simulation_status:
-            log_event_trigger(dto)
+            default_log.debug(f"As use_simulation_status is = {use_simulation_status} so starting live tracking")
+            ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+            default_log.debug(f"Starting logging of events of dto={dto} and alert_time={ist_datetime}")
+            log_event_trigger(dto, ist_datetime)
         return standard_json_response(error=False, message="ok", data={})
     except Exception as e:
         default_log.debug(f"An error occurred while starting logging: {e}")
@@ -76,7 +79,9 @@ def start_all_market_logging(
                     configuration=Configuration.HIGH
                 )
 
-                log_event_trigger(buy_dto)
+                ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+                default_log.debug(f"Starting logging of events of dto={buy_dto} and alert_time={ist_datetime}")
+                log_event_trigger(buy_dto, ist_datetime)
                 default_log.debug(f"Started logging for BUY signal with dto = {buy_dto}")
 
                 sell_dto = CheckEventsDTO(
@@ -87,7 +92,9 @@ def start_all_market_logging(
                     configuration=Configuration.LOW
                 )
 
-                log_event_trigger(sell_dto)
+                ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+                default_log.debug(f"Starting logging of events of dto={sell_dto} and alert_time={ist_datetime}")
+                log_event_trigger(sell_dto, ist_datetime)
                 default_log.debug(f"Started logging for SELL signal with dto = {sell_dto}")
 
         default_log.debug("Started all logging")

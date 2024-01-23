@@ -1,8 +1,9 @@
 from typing import Optional
 
-from api.symbol_budget_route_management.dtos.modify_budget_setting_dto import ModifyBudgetSettingDTO
 from config import default_log
 from data.db.init_db import get_db
+from data.enums.budget_part import BudgetPart
+from data.enums.trades import Trades
 from decorators.handle_generic_exception import dbapi_exception_handler
 from data.models.timeframe_budgets import TimeframeBudgets
 
@@ -33,12 +34,46 @@ def find_timeframe_budget_details_by_timeframe(timeframe: Optional[str] = None, 
 
 
 @dbapi_exception_handler
+def get_budget_setting_by_timeframe_trades_and_budget_utilization(
+        timeframe: str,
+        trades: Trades,
+        budget_utilization: BudgetPart,
+        session=None,
+        close_session=True
+):
+    default_log.debug(f"inside get_budget_setting_by_timeframe_trades_and_budget_utilization with "
+                      f"timeframe={timeframe}, trades={trades} and budget_utilization={budget_utilization} ")
+
+    db = session if session else next(get_db())
+
+    budget_setting = db.query(TimeframeBudgets).filter(
+        TimeframeBudgets.time_frame == timeframe,
+        TimeframeBudgets.trades == trades,
+        TimeframeBudgets.budget == budget_utilization
+    ).first()
+
+    default_log.debug(f"Returning budget_setting={budget_setting} for timeframe={timeframe}, trades={trades} and "
+                      f"budget_utilization={budget_utilization}")
+
+    return budget_setting
+
+
+@dbapi_exception_handler
 def get_all_timeframe_budgets(session=None, close_session=True):
     default_log.debug("inside get_all_timeframe_budgets")
 
     db = session if session else next(get_db())
 
-    timeframe_budget = db.query(TimeframeBudgets).all()
+    timeframe_budget = db.query(TimeframeBudgets).group_by(
+        TimeframeBudgets.time_frame,
+        TimeframeBudgets.id,
+        TimeframeBudgets.budget,
+        TimeframeBudgets.trades,
+        TimeframeBudgets.start_range,
+        TimeframeBudgets.end_range
+    ).order_by(
+        TimeframeBudgets.id.asc()
+    ).all()
 
     default_log.debug(f"Total {len(timeframe_budget)} returned")
 

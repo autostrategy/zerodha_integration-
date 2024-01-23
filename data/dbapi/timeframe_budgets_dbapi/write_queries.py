@@ -1,5 +1,7 @@
 from config import default_log
 from data.db.init_db import get_db
+from data.enums.budget_part import BudgetPart
+from data.enums.trades import Trades
 from decorators.handle_generic_exception import dbapi_exception_handler
 from data.models.timeframe_budgets import TimeframeBudgets
 from api.symbol_budget_route_management.dtos.add_budget_setting_dto import AddBudgetSettingDTO
@@ -78,3 +80,25 @@ def update_budget_setting(
         db.flush()
 
     return timeframe_budget.id
+
+
+@dbapi_exception_handler
+def delete_timeframe_budget_by_id(timeframe_budget_id: int, session=None, commit=True):
+    default_log.debug(f"inside delete_timeframe_budget_by_id with timeframe_budget_id={timeframe_budget_id}")
+
+    db = session if session else next(get_db())
+
+    existing_timeframe_budget = db.query(TimeframeBudgets).filter(TimeframeBudgets.id == timeframe_budget_id).first()
+
+    default_log.debug(f"Deleting existing_timeframe_budget having id={existing_timeframe_budget.id}")
+
+    db.delete(existing_timeframe_budget)
+
+    if commit:
+        default_log.debug(f"Committing deletion of existing timeframe budget having id={timeframe_budget_id}")
+        db.commit()
+    else:
+        default_log.debug(f"Flushing deletion of existing timeframe budget having id={timeframe_budget_id}")
+        db.flush()
+
+    return True

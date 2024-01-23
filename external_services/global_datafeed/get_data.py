@@ -174,8 +174,8 @@ def check_timestamp_and_start_event_checking(ist_timestamp: datetime, symbol: st
             signal_type=alert_type,
         )
         default_log.debug(f"Starting Logging of Events for Symbol={symbol} having time_frame={str(time_frame)} and "
-                          f"Signal Type is {alert_type}")
-        logic.zerodha_integration_management.zerodha_integration_logic.log_event_trigger(dto)
+                          f"Signal Type is {alert_type} and alert_time={ist_timestamp}")
+        logic.zerodha_integration_management.zerodha_integration_logic.log_event_trigger(dto, ist_timestamp)
 
     default_log.debug(f"Marking all matching rows having symbol={symbol} and ist_timestamp equal to {ist_timestamp} "
                       f"tracking started as True")
@@ -209,6 +209,12 @@ def feed_ticks_of_symbol(symbol: str):
 
     # Stop providing data and remove the symbol from the symbols list
     clean_symbol = symbol.split('-')[0]
+
+    symbol_timeframes = symbols_interval_data.get(clean_symbol)
+    symbol_timeframes = symbol_timeframes.keys()
+    for time_frame in symbol_timeframes:
+        symbols_interval_data[symbol][time_frame] = []
+
     updated_symbols_list = [sym for sym in symbols if sym != clean_symbol]
     symbols = updated_symbols_list
 
@@ -302,16 +308,21 @@ def process_symbol_ticks(symbol, time_frame):
     # Set the columns
     candles_interval_data.columns = ['open', 'high', 'low', 'close']
 
-    # Get the last row
-    last_row = candles_interval_data.reset_index().iloc[-1]
+    # Get the second to last row
+    if len(candles_interval_data) < 2:
+        # The previous candle data has not been prepared yet
+        symbols_interval_data[symbol][time_frame] = []
+        return
+
+    second_to_last_row = candles_interval_data.reset_index().iloc[-2]
 
     # Extract the relevant values for the columns 'open', 'high', 'low', 'close'
     last_row_json = {
-        'timestamp': last_row['Timestamp'],
-        'open': last_row['open'],
-        'high': last_row['high'],
-        'low': last_row['low'],
-        'close': last_row['close']
+        'timestamp': second_to_last_row['Timestamp'],
+        'open': second_to_last_row['open'],
+        'high': second_to_last_row['high'],
+        'low': second_to_last_row['low'],
+        'close': second_to_last_row['close']
     }
 
     # Store the json data for the symbol, interval
@@ -421,27 +432,6 @@ def add_historical_data(symbol: str, time_frame: str, hist_data):
     historical_data[key] = custom_historical_data
 
 
-async def SubscribeRealTimeData(symbol: str):
-    global global_feedata_websocket
-
-    ExchangeName = "NSE" if symbol not in indices_list else "NFO"
-    InstIdentifier = "NIFTY-I" if symbol == "NIFTY" else symbol
-    InstIdentifier = "BANKNIFTY-I" if symbol == "BANKNIFTY" else InstIdentifier
-    Unsubscribe = "false"
-    strMessage = '{"MessageType":"SubscribeRealtime","Exchange":"' + ExchangeName + '","Unsubscribe":"' + Unsubscribe + '","InstrumentIdentifier":"' + InstIdentifier + '"}'
-    await global_feedata_websocket.send(strMessage)
-    print("Message sent : " + strMessage)
-
-
-def run_subscribe_realtime_in_thread(symbol):
-    # Create an event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    # Run the asynchronous function
-    loop.run_until_complete(SubscribeRealTimeData(symbol))
-
-
 # Function to convert date strings to datetime objects
 def parse_date(date_str):
     return datetime.datetime.strptime(date_str, '%d%b%Y')
@@ -526,7 +516,7 @@ def GetHistory(
     else:
         strMessage = '{"MessageType":"GetHistory","UserTag":"' + str(
             user_tag) + '","Exchange":"' + str(ExchangeName) + '","InstrumentIdentifier":"' + str(
-            InstIdentifier) + '","Periodicity":"' + str(Periodicity) + '","isShortIdentifier":"' + str(
+            InstIdentifier) + '","isShortIdentifier":"' + str(
             isShortIdentifier) + '"'
 
     # Adding from and to time
@@ -683,7 +673,7 @@ def get_global_data_feed_historical_data(
     global started_backtesting
 
     default_log.debug(f"inside get_global_data_feed_historical_data with trading_symbol={trading_symbol} and "
-                      f"time_frame={time_frame}, from_time={from_time} and to_time={to_time}")
+                      f"time_frame={time_frame}, from_time={from_time} and to_time={to_time} ")
 
     if from_time is not None:
         key = (trading_symbol, int(time_frame))
@@ -727,7 +717,7 @@ def get_global_data_feed_historical_data(
         seconds = int((2 * 60) * time_frame)
         start_time = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
         start_time = start_time.astimezone(pytz.timezone("Asia/Kolkata"))
-        default_log.debug(f"Start time for symbol={trading_symbol} and timeframe={time_frame} for getting"
+        default_log.debug(f"Start time for symbol={trading_symbol} and timeframe={time_frame} for getting "
                           f"previous tick data is: {start_time}")
 
         from_time_in_epochs = str(int(start_time.timestamp()))
@@ -764,13 +754,13 @@ def get_global_data_feed_historical_data(
     return interval_data
 
 
-if __name__ == "__main__":
-    websocket_thread = threading.Thread(target=initialize_websocket_server)
-    websocket_thread.start()
-
-    time.sleep(5)  # sleep for 5 seconds
-    from_time = datetime.datetime.now() - datetime.timedelta(minutes=10)
-    default_log.debug(f"From time is: {from_time}")
-    from_time = "1704686400"
-    GetHistory(ws=global_feedata_websocket, instrument_identifier="AXISBANK", from_time_in_epochs=from_time,
-               time_frame="1", periodicity="TICK")
+# if __name__ == "__main__":
+#     websocket_thread = threading.Thread(target=initialize_websocket_server)
+#     websocket_thread.start()
+#
+#     time.sleep(5)  # sleep for 5 seconds
+#     from_time = datetime.datetime.now() - datetime.timedelta(minutes=10)
+#     default_log.debug(f"From time is: {from_time}")
+#     from_time = "1704686400"
+#     GetHistory(ws=global_feedata_websocket, instrument_identifier="AXISBANK", from_time_in_epochs=from_time,
+#                time_frame="1", periodicity="TICK")

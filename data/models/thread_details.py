@@ -13,6 +13,7 @@ class ThreadDetails(ModelBase):
     time_frame = Column(String)
     signal_type = Column(Enum(SignalType))
     configuration_type = Column(Enum(Configuration))
+    alert_time = Column(DateTime)
     signal_candle_high = Column(Float)
     adjusted_high = Column(Float)
     signal_candle_low = Column(Float)

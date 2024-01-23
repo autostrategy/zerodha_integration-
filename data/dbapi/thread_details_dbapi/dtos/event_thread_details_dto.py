@@ -7,6 +7,7 @@ from data.enums.signal_type import SignalType
 
 
 class EventThreadDetailsDTO(BaseModel):
+    alert_time: Optional[datetime]
     symbol: Optional[str]
     time_frame: Optional[str]
     signal_type: Optional[SignalType]

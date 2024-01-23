@@ -7,6 +7,7 @@ class RestartEventDTO(BaseModel):
     thread_id: int
     symbol: str
     time_frame: str
+    alert_time: Optional[datetime]
     candle_high: Optional[float]
     candle_low: Optional[float]
     adjusted_high: Optional[float]

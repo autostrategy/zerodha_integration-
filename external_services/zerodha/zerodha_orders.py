@@ -260,6 +260,16 @@ def store_access_token_of_kiteconnect(access_token: str):
 def check_open_position_status_and_close():
     global kite_access_token
     default_log.debug(f"inside check_open_position_status_and_close")
+
+    # Check if simulation is going on
+    # if yes then no need to do anything
+    simulation_mode = get_use_simulation_status()
+
+    if simulation_mode:
+        default_log.debug(f"As simulation is going on as simulation_mode={simulation_mode} "
+                          f"So ignoring checking open positions and closing")
+        return
+
     kite = get_kite_account_api()
 
     cancel_all_open_orders(kite)
@@ -542,9 +552,22 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
             # Calculate the next Thursday's date
             next_thursday_date = current_date + timedelta(days=days_until_next_thursday)
 
+        next_to_next_thursday_date = next_thursday_date + timedelta(days=7)
+        default_log.debug(f"Next to Next Thursday date is={next_to_next_thursday_date}")
+
         # Check if the next Thursday falls in the next month
         if next_thursday_date.month > current_date.month:
             # Format as YYMMM if next Thursday is in the next month
+            default_log.debug(f"As next thursday date ({next_thursday_date}) is falls in the "
+                              f"next month ({current_date.month + 1}) instead of the current_month "
+                              f"({current_date.month}) so using the following format "
+                              f"for timestamp => YYMMM")
+            formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+        # Check if next Thursday date is the last thursday of the month
+        elif next_to_next_thursday_date.month > current_date.month:
+            default_log.debug(f"As next thursday date ({next_thursday_date}) is the last thursday "
+                              f"of the current_month ({current_date.month}) so using the following format "
+                              f"for timestamp => YYMMM")
             formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
         else:
             # Format as YYMMDD if next Thursday is in the same month
@@ -564,9 +587,22 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
             # Calculate the next Thursday's date
             next_wednesday_date = current_date + timedelta(days=days_until_next_wednesday)
 
+        next_to_next_wednesday_date = next_wednesday_date + timedelta(days=7)
+        default_log.debug(f"Next to Next Wednesday date is={next_to_next_wednesday_date}")
+
         # Check if the next Thursday falls in the next month
         if next_wednesday_date.month > current_date.month:
-            # Format as YYMMM if next Thursday is in the next month
+            # Format as YYMMM if next Wednesday is in the next month
+            default_log.debug(f"As next wednesday date ({next_wednesday_date}) is falls in the "
+                              f"next month ({current_date.month + 1}) instead of the current_month "
+                              f"({current_date.month}) so using the following format "
+                              f"for timestamp => YYMMM")
+            formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+            # Check if next Thursday date is the last thursday of the month
+        elif next_to_next_wednesday_date.month > current_date.month:
+            default_log.debug(f"As next wednesday date ({next_wednesday_date}) is the last wednesday "
+                              f"of the current_month ({current_date.month}) so using the following format "
+                              f"for timestamp => YYMMM")
             formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
         else:
             # Format as YYMMDD if next Thursday is in the same month

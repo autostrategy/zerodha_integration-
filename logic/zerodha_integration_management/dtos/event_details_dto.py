@@ -6,6 +6,7 @@ from logic.zerodha_integration_management.dtos.tp_details_dto import TPDetailsDT
 
 
 class EventDetailsDTO(BaseModel):
+    alert_time: Optional[datetime]
     symbol: Optional[str]
     time_frame: Optional[str]
     trade1_quantity: Optional[int]

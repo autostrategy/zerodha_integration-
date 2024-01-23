@@ -43,14 +43,12 @@ def fetch_all_event_details(session=None, close_session=True):
     current_date = date.today()
 
     # Adjust the time to midnight of the current date
-    start_of_day = datetime.combine(current_date, datetime.min.time())
-    start_of_day = start_of_day - timedelta(days=3)
-    end_of_day = datetime.combine(current_date, datetime.max.time())
+    # start_of_day = datetime.combine(current_date, datetime.min.time())
+    # start_of_day = start_of_day - timedelta(days=3)
+    # end_of_day = datetime.combine(current_date, datetime.max.time())
 
     thread_details = (
         db.query(ThreadDetails)
-        .filter(ThreadDetails.event1_occur_time >= start_of_day)
-        .filter(ThreadDetails.event1_occur_time <= end_of_day)
         .order_by(ThreadDetails.id.desc())
         .all()
     )
@@ -78,7 +76,7 @@ def fetch_all_event_details(session=None, close_session=True):
         )
 
         event_detail = SingleEventDetailDTO(
-            date_time=thread_detail.event1_occur_time,
+            date_time=thread_detail.alert_time,
             symbol=thread_detail.symbol,
             time_frame=thread_detail.time_frame,
             signal_type=thread_detail.signal_type,

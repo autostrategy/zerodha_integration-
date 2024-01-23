@@ -12,6 +12,7 @@ def add_thread_event_details(dto: EventThreadDetailsDTO, session=None, commit=Tr
     db = session if session else next(get_db())
 
     new_thread_details = ThreadDetails(
+        alert_time=dto.alert_time,
         symbol=dto.symbol,
         time_frame=dto.time_frame,
         signal_type=dto.signal_type,
@@ -68,6 +69,10 @@ def update_thread_event_details(dto: EventThreadDetailsDTO, thread_detail_id: in
     if thread_detail is None:
         default_log.debug(f"Thread details not found for id={thread_detail_id}")
         return None
+
+    if dto.alert_time is not None:
+        default_log.debug(f"Updating alert time to={dto.alert_time}")
+        thread_detail.alert_time = dto.alert_time
 
     if dto.symbol is not None:
         default_log.debug(f"Updating symbol to={dto.symbol}")

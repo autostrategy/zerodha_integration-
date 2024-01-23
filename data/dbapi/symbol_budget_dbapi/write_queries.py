@@ -59,3 +59,27 @@ def modify_symbol_budget(
         db.flush()
 
     return symbol_budget.id
+
+
+@dbapi_exception_handler
+def delete_symbol_budget_by_id(symbol_budget_id: int, session=None, commit=True):
+    default_log.debug(f"inside delete_symbol_budget_by_id with symbol_budget_id={symbol_budget_id}")
+
+    db = session if session else next(get_db())
+
+    existing_symbol_budget = db.query(SymbolBudget).filter(
+        SymbolBudget.id == symbol_budget_id
+    ).first()
+
+    default_log.debug(f"deleting symbol budget={existing_symbol_budget} having id={symbol_budget_id}")
+
+    db.delete(existing_symbol_budget)
+
+    if commit:
+        default_log.debug(f"Committing deletion of existing symbol budget having id={symbol_budget_id}")
+        db.commit()
+    else:
+        default_log.debug(f"Flushing deletion of existing symbol budget having id={symbol_budget_id}")
+        db.flush()
+    
+    return True

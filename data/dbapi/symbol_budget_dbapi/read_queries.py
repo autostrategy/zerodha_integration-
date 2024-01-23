@@ -33,12 +33,41 @@ def get_symbol_budget(symbol: str, time_frame: str = None, session=None, close_s
 
 
 @dbapi_exception_handler
+def get_symbol_budget_by_symbol_and_timeframe(
+        symbol: str,
+        timeframe: str,
+        session=None,
+        close_session=True,
+):
+    default_log.debug(f"inside get_symbol_budget_by_symbol_and_timeframe with symbol={symbol} and "
+                      f"timeframe={timeframe}")
+
+    db = session if session else next(get_db())
+
+    symbol_budget = db.query(SymbolBudget).filter(
+        SymbolBudget.symbol == symbol,
+        SymbolBudget.time_frame == timeframe
+    ).first()
+
+    default_log.debug(f"Returning symbol budget={symbol_budget} for symbol={symbol} and timeframe={timeframe}")
+
+    return symbol_budget
+
+
+@dbapi_exception_handler
 def get_all_symbol_budgets(session=None, close_session=True):
     default_log.debug(f"inside get_all_symbol_budget")
 
     db = session if session else next(get_db())
 
-    symbol_budgets = db.query(SymbolBudget).all()
+    symbol_budgets = db.query(SymbolBudget).group_by(
+        SymbolBudget.time_frame,
+        SymbolBudget.id,
+        SymbolBudget.symbol,
+        SymbolBudget.budget
+    ).order_by(
+        SymbolBudget.id.asc()
+    ).all()
 
     default_log.debug(f"Returning {len(symbol_budgets)}")
 

@@ -19,7 +19,6 @@ from api.user_management.user_basic_api import user_router
 from api.event_management.event_managment_crud_api import event_router
 
 from external_services.global_datafeed.get_data import start_global_data_feed_server
-from external_services.truedata.truedata_external_service import start_truedata_server
 from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data, \
     get_access_token
 from logic.zerodha_integration_management.zerodha_integration_logic import restart_event_threads, \
@@ -110,12 +109,6 @@ async def startup():
 
     # Start the thread
     scheduled_task_thread.start()
-
-    if config.use_truedata:
-        # TRUEDATA SERVER
-        truedata_thread = threading.Thread(target=start_truedata_server)
-        # Start the thread
-        truedata_thread.start()
 
     # Load all symbol budgets
     store_all_symbol_budget()

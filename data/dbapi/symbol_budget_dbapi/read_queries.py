@@ -44,10 +44,16 @@ def get_symbol_budget_by_symbol_and_timeframe(
 
     db = session if session else next(get_db())
 
-    symbol_budget = db.query(SymbolBudget).filter(
-        SymbolBudget.symbol == symbol,
-        SymbolBudget.time_frame == timeframe
-    ).first()
+    if symbol is None:
+        symbol_budget = db.query(SymbolBudget).filter(
+            SymbolBudget.symbol.is_(None),
+            SymbolBudget.time_frame == timeframe
+        )
+    else:
+        symbol_budget = db.query(SymbolBudget).filter(
+            SymbolBudget.symbol == symbol,
+            SymbolBudget.time_frame == timeframe
+        ).first()
 
     default_log.debug(f"Returning symbol budget={symbol_budget} for symbol={symbol} and timeframe={timeframe}")
 

@@ -5,7 +5,6 @@ import threading
 from typing import Optional
 
 import pytz
-import asyncio
 import pandas as pd
 
 from api.event_management.dtos.check_events_dto import CheckEventsDTO
@@ -40,6 +39,7 @@ historical_data = dict()
 trade_alerts_df = pd.DataFrame()
 
 started_backtesting = sandbox_mode
+backtest_feed_ticks_threads = dict()
 
 
 def get_use_simulation_status():
@@ -195,7 +195,7 @@ def feed_ticks_of_symbol(symbol: str):
     # Read the symbol csv ticks file
     while True:
         if os.path.exists(filename):
-            time.sleep(1)  # sleep for 2 secs
+            time.sleep(1)  # sleep for 1 sec
             symbol_ticks_df = pd.read_csv(filename)
             break
 
@@ -207,16 +207,43 @@ def feed_ticks_of_symbol(symbol: str):
 
         tick_callback(tick_data)
 
-    # Stop providing data and remove the symbol from the symbols list
-    clean_symbol = symbol.split('-')[0]
+    time.sleep(2)  # sleep for 2 seconds before deleting all ticks as previous tick_callback would be processing the
+    # ticks
 
-    symbol_timeframes = symbols_interval_data.get(clean_symbol)
-    symbol_timeframes = symbol_timeframes.keys()
-    for time_frame in symbol_timeframes:
-        symbols_interval_data[symbol][time_frame] = []
+    # Remove the ticks file
+    try:
+        default_log.debug(f"Deleting the ticks file with name={filename} as all ticks have been provided for "
+                          f"symbol={trading_symbol}")
+        os.remove(filename)
 
-    updated_symbols_list = [sym for sym in symbols if sym != clean_symbol]
-    symbols = updated_symbols_list
+        # Empty the data of the symbol
+        stop_providing_ticks_of_symbol(trading_symbol)
+    except Exception as e:
+        default_log.debug(f"An error occurred while removing the file having filename={filename}. Error: {e}")
+
+
+def stop_providing_ticks_of_symbol(symbol: str):
+    global symbols
+    global symbols_interval_data
+    global symbol_ticks
+    default_log.debug(f"inside stop_providing_ticks_of_symbol with symbol={symbol}")
+
+    try:
+        default_log.debug(f"Clearing all symbol ticks for symbol={symbol}")
+        symbol_ticks[symbol] = []
+
+        symbol_timeframes = symbols_interval_data.get(symbol, None)
+        default_log.debug(f"Symbol Timeframes Details Returned for symbol={symbol} => {symbol_timeframes}")
+
+        if symbol_timeframes:
+            symbol_timeframes = symbol_timeframes.keys()
+            for time_frame in symbol_timeframes:
+                symbols_interval_data[symbol][time_frame] = []
+
+        updated_symbols_list = [sym for sym in symbols if sym != symbol]
+        symbols = updated_symbols_list
+    except Exception as e:
+        default_log.debug(f"An error occurred while clearing the data of symbol={symbol}. Error: {e}")
 
 
 def save_tick_data_to_csv(tick_data, symbol: str):
@@ -704,7 +731,7 @@ def get_global_data_feed_historical_data(
         return []
 
     # Get Tick Data
-    if trading_symbol not in symbols:
+    if (trading_symbol not in symbols) and not started_backtesting:
         symbols.append(trading_symbol)
         SubscribeRealtime(ws=global_feedata_websocket, instrument_identifier=trading_symbol)
         default_log.debug(f"Started subscribing to Global Feed about symbol={trading_symbol}")

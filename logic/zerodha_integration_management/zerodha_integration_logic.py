@@ -502,7 +502,7 @@ def fetch_symbol_budget(symbol: str, time_frame: str):
         budget = budget_dict.get(key, None)
 
     if budget is None:
-        key = ('default', symbol)
+        key = ('default', time_frame)
         budget = budget_dict.get(key, None)
 
     if budget is None:
@@ -537,6 +537,8 @@ def store_all_symbol_budget(reset: bool = False):
         else:
             key = (symbol_budget.symbol, symbol_budget.time_frame)
             budget_dict[key] = symbol_budget.budget
+
+    default_log.debug(f"Stored all symbol budgets => {budget_dict}")
 
 
 def log_event_trigger(dto: CheckEventsDTO, alert_time: datetime):
@@ -792,12 +794,13 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
     h = event_data_dto.event1_candle_high if event_data_dto.adjusted_high is None else event_data_dto.adjusted_high
     l = event_data_dto.event1_candle_low if event_data_dto.adjusted_low is None else event_data_dto.adjusted_low
 
+    timestamp = candle_data["time"]
+
     if event1_signal_type == SignalType.BUY:
         current_candle_high = candle_data["high"]
         # Set the H1 data
         event_data_dto.high_1 = current_candle_high if event_data_dto.high_1 is None else event_data_dto.high_1
 
-        timestamp = candle_data["time"]
         # Get the H1 data
         if current_candle_high > event_data_dto.high_1:
             default_log.debug(f"Highest Point (H1) found at={timestamp} "
@@ -812,23 +815,28 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
 
         greatest = max(h1_minus_h, sl_minus_h1)
 
-        tp_val = (event_data_dto.entry_price - greatest)
-
+        # tp_val = (event_data_dto.entry_price - greatest)
+        tp_val = (h - greatest)
+        tp_buffer = None
         # update tp value
         if event_data_dto.symbol not in indices_list:
             default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
                               f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
                               f"by subtracting extra percent buffer of {buffer_for_tp_trade}")
 
+            tp_buffer = buffer_for_tp_trade
+
             # Calculate TP with buffer
-            tp_with_buffer = tp_val - (tp_val * buffer_for_tp_trade)
+            tp_with_buffer = tp_val - (tp_val * (tp_buffer / 100))
         else:
             default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
                               f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
                               f"by subtracting extra percent buffer of {buffer_for_indices_tp_trade}")
 
+            tp_buffer = buffer_for_indices_tp_trade
+
             # Calculate TP with buffer
-            tp_with_buffer = tp_val - (tp_val * buffer_for_indices_tp_trade)
+            tp_with_buffer = tp_val - (tp_val * (tp_buffer / 100))
 
         greatest = -greatest
 
@@ -853,9 +861,28 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
 
         greatest = max(l1_minus_sl, l_minus_l1)
 
-        tp_val = (event_data_dto.entry_price + greatest)
+        # tp_val = (event_data_dto.entry_price + greatest)
+        tp_val = (l + greatest)
 
-        tp_with_buffer = tp_val - (tp_val * buffer_for_tp_trade)
+        # update tp value
+        if event_data_dto.symbol not in indices_list:
+            default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
+                              f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
+                              f"by subtracting extra percent buffer of {buffer_for_tp_trade}")
+
+            tp_buffer = buffer_for_tp_trade
+
+            # Calculate TP with buffer
+            tp_with_buffer = tp_val - (tp_val * (tp_buffer / 100))
+        else:
+            default_log.debug(f"For TP value for symbol={event_data_dto.symbol} and "
+                              f"timeframe={event_data_dto.time_frame} at timestamp={timestamp} calculating TP value "
+                              f"by subtracting extra percent buffer of {buffer_for_indices_tp_trade}")
+
+            tp_buffer = buffer_for_indices_tp_trade
+
+            # Calculate TP with buffer
+            tp_with_buffer = tp_val - (tp_val * (tp_buffer / 100))
 
     tp_details = TPDetailsDTO(
         timestamp=candle_data["time"],
@@ -867,7 +894,7 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
         high=h,
         entry_price=event_data_dto.entry_price,
         greatest_price=greatest,
-        tp_buffer_percent=buffer_for_tp_trade,
+        tp_buffer_percent=tp_buffer,
         tp_with_buffer=tp_with_buffer
     )
 
@@ -985,7 +1012,7 @@ def trade_logic_sell(
                 event1_candle_height = event_data_dto.event1_candle_high - event_data_dto.event1_candle_low
                 event_data_dto.candle_length = event1_candle_height
 
-                if adjusted_difference > event_data_dto.candle_length:
+                if adjusted_difference > event1_candle_height:
                     default_log.debug(f"The adjusted_high difference={adjusted_difference} has gone above "
                                       f"by more than the candle_length={event_data_dto.candle_length} so stopping "
                                       f"tracking of the events for symbol={symbol} having timeframe={timeframe}")
@@ -1035,7 +1062,7 @@ def trade_logic_sell(
                                   f"({sell_candle_low}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
                                   f"and time_frame={event_data_dto.time_frame}")
 
-                candle_high_to_check = sell_candle_low - (sell_candle_low * buffer_for_entry_trade)
+                candle_high_to_check = sell_candle_low - (sell_candle_low * (buffer_for_entry_trade / 100))
                 event_data_dto.event3_occur_breakpoint = candle_high_to_check
             else:
                 default_log.debug(f"Subtracting a buffer percent ({buffer_for_indices_entry_trade}) "
@@ -1043,7 +1070,7 @@ def trade_logic_sell(
                                   f"event 3 for symbol={event_data_dto.symbol} and "
                                   f"time_frame={event_data_dto.time_frame}")
 
-                candle_high_to_check = sell_candle_low - (sell_candle_low * buffer_for_indices_entry_trade)
+                candle_high_to_check = sell_candle_low - (sell_candle_low * (buffer_for_indices_entry_trade / 100))
                 event_data_dto.event3_occur_breakpoint = candle_high_to_check
 
             if current_candle_high > candle_high_to_check:
@@ -1281,14 +1308,14 @@ def trade_logic_buy(
                                   f"({buy_candle_high}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
                                   f"and time_frame={event_data_dto.time_frame}")
 
-                candle_low_to_check = buy_candle_high + (buy_candle_high * buffer_for_entry_trade)
+                candle_low_to_check = buy_candle_high + (buy_candle_high * (buffer_for_entry_trade / 100))
                 event_data_dto.event3_occur_breakpoint = candle_low_to_check
             else:
                 default_log.debug(f"Adding a buffer percent ({buffer_for_indices_entry_trade}) to the buy_candle_high "
                                   f"({buy_candle_high}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
                                   f"and time_frame={event_data_dto.time_frame}")
 
-                candle_low_to_check = buy_candle_high + (buy_candle_high * buffer_for_indices_entry_trade)
+                candle_low_to_check = buy_candle_high + (buy_candle_high * (buffer_for_indices_entry_trade / 100))
                 event_data_dto.event3_occur_breakpoint = candle_low_to_check
 
             if current_candle_low < candle_low_to_check:
@@ -1556,7 +1583,7 @@ def place_initial_zerodha_trades(
                               f"MARKET order id={entry_trade_order_id} for symbol={symbol} and "
                               f"indices_symbol={indices_symbol}")
 
-            take_profit_with_buffer = take_profit_updated - (take_profit_updated * buffer_for_tp_trade)
+            take_profit_with_buffer = take_profit_updated - (take_profit_updated * (buffer_for_tp_trade / 100))
 
             default_log.debug(f"{'[BEYOND EXTENSION] ' if extra_extension else ''}"
                               f"Updating old TP (by adding/subtracting buffer of [{buffer_for_tp_trade}]) "
@@ -1921,7 +1948,7 @@ def place_extension_zerodha_trades(
                           f"MARKET order id={extension_trade_order_id} for symbol={symbol} and "
                           f"indices_symbol={indices_symbol}")
 
-        take_profit_with_buffer = take_profit_updated - (take_profit_updated * buffer_for_tp_trade)
+        take_profit_with_buffer = take_profit_updated - (take_profit_updated * (buffer_for_tp_trade / 100))
 
         default_log.debug(f"[EXTENSION] Updating old TP (by adding/subtracting buffer of [{buffer_for_tp_trade}]) "
                           f"value={take_profit_updated} to {take_profit_with_buffer} for "
@@ -2459,7 +2486,11 @@ def start_market_logging_for_buy(
                 thread.start()
     else:
         # Not restarted flow
-        tm.sleep(wait_time)
+        use_simulation = get_use_simulation_status()
+        if not use_simulation:
+            default_log.debug(f"As not running on simulator as use_simulation={use_simulation} for symbol={symbol} "
+                              f"having timeframe={timeframe}, so not sleeping for the initial wait_time of {wait_time}")
+            tm.sleep(wait_time)
         current_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
 
         # Fetch candle data
@@ -2751,6 +2782,7 @@ def start_market_logging_for_buy(
 
                     trade1_quantity = loss_percent / abs(entry_price - entry_sl_value)
                     trade1_quantity = int(round(trade1_quantity, 0))
+                    dto.trade1_quantity = trade1_quantity
 
                     default_log.debug(f"Rounding off trade1_quantity ({trade1_quantity}) to the "
                                       f"indices_quantity_multiplier ({indices_quantity_multiplier}) for symbol={symbol} "
@@ -2770,7 +2802,7 @@ def start_market_logging_for_buy(
                             f"multiplier ({indices_quantity_multiplier}) so skipping placing MARKET "
                             f"order for symbol={symbol} and indices_symbol={indices_symbol} having "
                             f"timeframe={timeframe}")
-                        dto.trade1_quantity = trade1_quantity
+                        # dto.trade1_quantity = trade1_quantity
                         tried_creating_entry_order = True
                         dto.tp_order_status = 'OPEN'
                         dto.sl_order_status = 'OPEN'
@@ -4051,7 +4083,11 @@ def start_market_logging_for_sell(
                 thread.start()
     else:
         # Non restart flow
-        tm.sleep(wait_time)
+        use_simulation = get_use_simulation_status()
+        if not use_simulation:
+            default_log.debug(f"As not running on simulator as use_simulation={use_simulation} for symbol={symbol} "
+                              f"having timeframe={timeframe}, so not sleeping for the initial wait_time of {wait_time}")
+            tm.sleep(wait_time)
         current_time = datetime.now().astimezone(pytz.timezone("Asia/Kolkata"))
 
         # Fetch candle data
@@ -4340,6 +4376,8 @@ def start_market_logging_for_sell(
                     trade1_quantity = loss_percent / abs(entry_price - entry_sl_value)
                     trade1_quantity = int(round(trade1_quantity, 0))
 
+                    dto.trade1_quantity = trade1_quantity
+
                     default_log.debug(f"Rounding off trade1_quantity ({trade1_quantity}) to the "
                                       f"indices_quantity_multiplier ({indices_quantity_multiplier}) for symbol={symbol} "
                                       f"and indices_symbol={indices_symbol} having time_frame={timeframe}")
@@ -4358,7 +4396,7 @@ def start_market_logging_for_sell(
                             f"multiplier ({indices_quantity_multiplier}) so skipping placing MARKET "
                             f"order for symbol={symbol} and indices_symbol={indices_symbol} having "
                             f"timeframe={timeframe}")
-                        dto.trade1_quantity = trade1_quantity
+                        # dto.trade1_quantity = trade1_quantity
                         tried_creating_entry_order = True
                         dto.tp_order_status = 'OPEN'
                         dto.sl_order_status = 'OPEN'
@@ -4379,11 +4417,10 @@ def start_market_logging_for_sell(
                             default_log.debug(
                                 f"An error occurred while placing MARKET order for indices symbol={indices_symbol} "
                                 f"with quantity={quantity} with signal_type={SignalType.BUY}")
-
-                            tried_creating_entry_order = True
                         else:
                             dto.entry_trade_order_id = entry_trade_order_id
 
+                        tried_creating_entry_order = True
                         dto.tp_order_status = 'OPEN'
                         dto.sl_order_status = 'OPEN'
                         dto.trade1_quantity = quantity
@@ -4720,7 +4757,8 @@ def start_market_logging_for_sell(
                                         f"indices_quantity_multiplier ({indices_quantity_multiplier})")
                                     dto.extension_quantity = total_quantity
                                 else:
-                                    default_log.debug(f"Creating EXTENSION indices MARKET order with quantity=50 for "
+                                    default_log.debug(f"Creating EXTENSION indices MARKET order with "
+                                                      f"quantity={total_quantity} for "
                                                       f"indices_symbol={indices_symbol} and time_frame={timeframe}")
 
                                     if dto.extension_quantity is None:
@@ -4788,7 +4826,9 @@ def start_market_logging_for_sell(
                             tried_creating_extension1_order = True
                             loss_percent = loss_budget * trade2_loss_percent
                             # loss_percent = trade2_loss_percent
-                            default_log.debug(f"Loss percent = {loss_percent} for trade no. {trades_made + 1}")
+                            default_log.debug(f"Loss percent = {loss_percent} for trade no. {trades_made + 1} and "
+                                              f"entry_price_difference={entry_price_difference} and trade1_quantity "
+                                              f"= {dto.trade1_quantity}")
 
                             extension_quantity = loss_percent / entry_price_difference
 
@@ -4833,7 +4873,8 @@ def start_market_logging_for_sell(
                                                           f"not a multiplier of {indices_quantity_multiplier}")
                                         break
                                 else:
-                                    default_log.debug(f"Creating EXTENSION indices MARKET order with quantity=50 for "
+                                    default_log.debug(f"Creating EXTENSION indices MARKET order with "
+                                                      f"quantity={total_quantity} for "
                                                       f"indices_symbol={indices_symbol} and time_frame={timeframe}")
 
                                     if dto.extension_quantity is None:

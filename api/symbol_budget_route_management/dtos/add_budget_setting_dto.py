@@ -6,8 +6,9 @@ from data.enums.trades import Trades
 
 
 class AddBudgetSettingDTO(BaseModel):
+    symbol: Optional[str]  # if nothing passed then it is assumed as ALL STOCKS
     time_frame: Optional[str]
     trades: Trades
-    budget_utilization: BudgetPart
+    budget_utilization: int
     start_range: int
     end_range: int

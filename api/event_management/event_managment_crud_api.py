@@ -8,18 +8,34 @@ from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 
 from api.event_management.dtos.check_events_dto import CheckEventsDTO
-from config import default_log, time_stamps, instrument_tokens_map
-from data.enums.configuration import Configuration
-from data.enums.signal_type import SignalType
+from config import default_log, time_stamps, instrument_tokens_map, stop_trade_time
 from decorators.handle_generic_exception import frontend_api_generic_exception
 from external_services.global_datafeed.get_data import download_tick_data_for_symbols, start_backtesting, \
-    get_use_simulation_status
+    get_use_simulation_status, get_global_data_feed_connection_status, get_backtesting_status
 from logic.zerodha_integration_management.get_event_details_logic import get_all_event_details
 from logic.zerodha_integration_management.zerodha_integration_logic import log_event_trigger
 from standard_responses.standard_json_response import standard_json_response
 
 
 event_router = APIRouter(prefix='/event', tags=['event'])
+
+
+@event_router.get('/global-data-feed-connection-status')
+@frontend_api_generic_exception
+def get_global_data_feed_connection_status_api_route(request: Request):
+    default_log.debug(f"inside /global-data-feed-connection-status")
+
+    global_data_feed_connection_status = get_global_data_feed_connection_status()
+
+    default_log.debug(f"Current Global Data Feed connection status => {global_data_feed_connection_status}")
+
+    return standard_json_response(
+        error=False,
+        message="ok",
+        data={
+            'connection_status': global_data_feed_connection_status
+        }
+    )
 
 
 @event_router.post("/add-event-check")
@@ -32,8 +48,9 @@ def check_event_triggers(
 
     try:
         use_simulation_status = get_use_simulation_status()
-        if not use_simulation_status:
-            default_log.debug(f"As use_simulation_status is = {use_simulation_status} so starting live tracking")
+        if (not use_simulation_status) and (not datetime.now() > stop_trade_time):
+            default_log.debug(f"As use_simulation_status is = {use_simulation_status} and current datetime "
+                              f"({datetime.now()}) < stop_trade_time ({stop_trade_time}) so starting live tracking")
             ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
             default_log.debug(f"Starting logging of events of dto={dto} and alert_time={ist_datetime}")
             log_event_trigger(dto, ist_datetime)
@@ -68,15 +85,22 @@ def start_all_market_logging(
 ):
     default_log.debug(f"inside /start-all-logging")
 
+    if datetime.now() > stop_trade_time:
+        default_log.debug(f"Not starting event checking as current_datetime ({datetime.now()}) > stop_trade_time "
+                          f"({stop_trade_time})")
+        return standard_json_response(
+            error=True,
+            message="Not starting event checking as current time is stop trade time",
+            data={}
+        )
+
     try:
         for sym, token in instrument_tokens_map.items():
             for timestamp in time_stamps:
                 buy_dto = CheckEventsDTO(
                     symbol=sym,
-                    time_of_candle_formation=datetime.now().astimezone(pytz.timezone("Asia/Kolkata")),
                     time_frame_in_minutes=timestamp,
-                    signal_type=SignalType.BUY,
-                    configuration=Configuration.HIGH
+                    signal_type="1",  # BUY
                 )
 
                 ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
@@ -86,10 +110,8 @@ def start_all_market_logging(
 
                 sell_dto = CheckEventsDTO(
                     symbol=sym,
-                    time_of_candle_formation=datetime.now().astimezone(pytz.timezone("Asia/Kolkata")),
                     time_frame_in_minutes=timestamp,
-                    signal_type=SignalType.SELL,
-                    configuration=Configuration.LOW
+                    signal_type="2",  # SELL
                 )
 
                 ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
@@ -148,4 +170,18 @@ def add_csv_for_backtesting(
     threading.Thread(target=download_tick_data_for_symbols, args=(backtesting_data_date, symbols)).start()
 
     return standard_json_response(error=False, message="ok", data={})
+
+
+@event_router.get("/backtesting-status")
+@frontend_api_generic_exception
+def get_backtesting_status_route(
+        request: Request
+):
+    default_log.debug(f"inside /backtesting-status")
+
+    backtesting_status = get_backtesting_status()
+
+    default_log.debug(f"backtesting_status retrieved={backtesting_status}")
+
+    return standard_json_response(error=False, message="ok", data={'backtesting_status': backtesting_status})
 

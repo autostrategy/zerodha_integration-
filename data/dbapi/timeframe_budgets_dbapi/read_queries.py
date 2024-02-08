@@ -37,20 +37,31 @@ def find_timeframe_budget_details_by_timeframe(timeframe: Optional[str] = None, 
 def get_budget_setting_by_timeframe_trades_and_budget_utilization(
         timeframe: str,
         trades: Trades,
-        budget_utilization: BudgetPart,
+        budget_utilization: int,
+        symbol: Optional[str] = None,
         session=None,
         close_session=True
 ):
     default_log.debug(f"inside get_budget_setting_by_timeframe_trades_and_budget_utilization with "
-                      f"timeframe={timeframe}, trades={trades} and budget_utilization={budget_utilization} ")
+                      f"timeframe={timeframe}, trades={trades} and budget_utilization={budget_utilization} "
+                      f"with symbol={symbol}")
 
     db = session if session else next(get_db())
 
-    budget_setting = db.query(TimeframeBudgets).filter(
-        TimeframeBudgets.time_frame == timeframe,
-        TimeframeBudgets.trades == trades,
-        TimeframeBudgets.budget == budget_utilization
-    ).first()
+    if symbol is None:
+        budget_setting = db.query(TimeframeBudgets).filter(
+            TimeframeBudgets.symbol.is_(None),
+            TimeframeBudgets.time_frame == timeframe,
+            TimeframeBudgets.trades == trades,
+            TimeframeBudgets.budget == budget_utilization
+        ).first()
+    else:
+        budget_setting = db.query(TimeframeBudgets).filter(
+            TimeframeBudgets.symbol == symbol,
+            TimeframeBudgets.time_frame == timeframe,
+            TimeframeBudgets.trades == trades,
+            TimeframeBudgets.budget == budget_utilization
+        ).first()
 
     default_log.debug(f"Returning budget_setting={budget_setting} for timeframe={timeframe}, trades={trades} and "
                       f"budget_utilization={budget_utilization}")
@@ -65,6 +76,7 @@ def get_all_timeframe_budgets(session=None, close_session=True):
     db = session if session else next(get_db())
 
     timeframe_budget = db.query(TimeframeBudgets).group_by(
+        TimeframeBudgets.symbol,
         TimeframeBudgets.time_frame,
         TimeframeBudgets.id,
         TimeframeBudgets.budget,

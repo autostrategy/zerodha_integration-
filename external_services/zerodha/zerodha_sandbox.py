@@ -219,11 +219,10 @@ def place_order():
                                     trigger_price=trigger_price)
         return jsonify({'order_id': order.order_id, 'status': 'PUT ORDER REQ RECEIVED'})
 
-    if 'average_price' in data:
-        average_price = data['average_price']
-        order = sandbox.place_order(symbol, quantity, exchange, transaction_type, order_type, product, validity,
-                                    average_price=average_price)
-        return jsonify({'order_id': order.order_id, 'status': 'PUT ORDER REQ RECEIVED'})
+    average_price = data['average_price']
+    order = sandbox.place_order(symbol, quantity, exchange, transaction_type, order_type, product, validity,
+                                average_price=average_price)
+    return jsonify({'order_id': order.order_id, 'status': 'PUT ORDER REQ RECEIVED'})
 
 
 @app.route('/orders', methods=['GET'])
@@ -345,4 +344,4 @@ if __name__ == '__main__':
     execute_thread.start()
 
     # Run the Flask app
-    app.run(debug=True, threaded=True, port=3000)
+    app.run(debug=True, threaded=True, port=3030)

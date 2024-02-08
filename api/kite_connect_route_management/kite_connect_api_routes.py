@@ -1,3 +1,5 @@
+import os
+
 import requests
 import hashlib
 from fastapi import APIRouter, Request
@@ -7,9 +9,58 @@ from config import default_log, KITE_API_URL, zerodha_api_key, zerodha_api_secre
 from decorators.handle_generic_exception import frontend_api_generic_exception
 from external_services.zerodha.zerodha_orders import store_access_token_of_kiteconnect, \
     get_access_token_from_request_token
+from logic.zerodha_integration_management.zerodha_integration_logic import get_zerodha_equity
 from standard_responses.standard_json_response import standard_json_response
 
 kite_connect_router = APIRouter(prefix='/kite-connect', tags=['kite-connect'])
+
+
+@kite_connect_router.get('/current-equity')
+@frontend_api_generic_exception
+def get_current_kite_equity(request: Request):
+    default_log.debug(f"inside /current-equity")
+
+    current_equity = get_zerodha_equity()
+
+    default_log.debug(f"Current Equity returned: {current_equity}")
+
+    return standard_json_response(
+        error=False,
+        message="ok",
+        data={
+            'current_equity': current_equity
+        }
+    )
+
+
+@kite_connect_router.get('/access-token-status')
+@frontend_api_generic_exception
+def get_access_token_status(request: Request):
+    default_log.debug(f"inside /kite-connect/access-token-status")
+
+    access_token_file_path = 'access_token.txt'
+    access_token_set_status = False
+    try:
+        if os.path.exists(access_token_file_path):
+            default_log.debug(f"Since {access_token_file_path} exists so setting access_token_set_status as True")
+            access_token_set_status = True
+
+    except Exception as e:
+        default_log.debug(f"An error occurred while checking access token path exists or not. Error={e}")
+        return standard_json_response(
+            error=True,
+            message="An error occurred while checking access token has been set or not",
+            data={}
+        )
+
+    default_log.debug(f"Current status of access token = {access_token_set_status}")
+    return standard_json_response(
+        error=False,
+        message="ok",
+        data={
+            'access_token_set_status': access_token_set_status
+        }
+    )
 
 
 @kite_connect_router.get("/login")

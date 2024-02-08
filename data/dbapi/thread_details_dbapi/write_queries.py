@@ -41,7 +41,21 @@ def add_thread_event_details(dto: EventThreadDetailsDTO, session=None, commit=Tr
         extension1_order_id=dto.extension1_order_id,
         extension2_order_id=dto.extension2_order_id,
         extension1_quantity=dto.extension1_quantity,
-        extension2_quantity=dto.extension2_quantity
+        extension2_quantity=dto.extension2_quantity,
+        cover_sl=dto.cover_sl,
+        cover_sl_quantity=dto.cover_sl_quantity,
+        cover_sl_trade_order_id=dto.cover_sl_trade_order_id,
+        reverse1_trade_quantity=dto.reverse1_trade_quantity,
+        reverse2_trade_quantity=dto.reverse2_trade_quantity,
+        total_reverse_trade_quantity=dto.total_reverse_trade_quantity,
+        reverse1_trade_order_id=dto.reverse1_trade_order_id,
+        reverse2_trade_order_id=dto.reverse2_trade_order_id,
+        reverse_trade_tp_order_id=dto.reverse_trade_tp_order_id,
+        reverse_trade_sl_order_id=dto.reverse_trade_sl_order_id,
+        reverse1_entry_price=dto.reverse1_entry_price,
+        reverse2_entry_price=dto.reverse2_entry_price,
+        extended_sl=dto.extended_sl,
+        trade_alert_status=dto.trade_alert_status
     )
 
     db.add(new_thread_details)
@@ -189,6 +203,74 @@ def update_thread_event_details(dto: EventThreadDetailsDTO, thread_detail_id: in
     if dto.extension2_quantity is not None:
         default_log.debug(f"Updating extension2_quantity to={dto.extension2_quantity}")
         thread_detail.extension2_quantity = dto.extension2_quantity
+
+    if dto.cover_sl is not None:
+        default_log.debug(f"Updating cover_sl to={dto.cover_sl}")
+        thread_detail.cover_sl = dto.cover_sl
+
+    if dto.reverse1_trade_quantity is not None:
+        default_log.debug(f"Updating reverse1_trade_quantity to={dto.reverse1_trade_quantity}")
+        thread_detail.reverse1_trade_quantity = dto.reverse1_trade_quantity
+
+    if dto.reverse2_trade_quantity is not None:
+        default_log.debug(f"Updating reverse2_trade_quantity to={dto.reverse2_trade_quantity}")
+        thread_detail.reverse2_trade_quantity = dto.reverse2_trade_quantity
+
+    if dto.total_reverse_trade_quantity is not None:
+        default_log.debug(f"Updating total_reverse_trade_quantity to={dto.total_reverse_trade_quantity}")
+        thread_detail.total_reverse_trade_quantity = dto.total_reverse_trade_quantity
+
+    if dto.reverse1_trade_order_id is not None:
+        default_log.debug(f"Updating reverse1_trade_order_id to={dto.reverse1_trade_order_id}")
+        thread_detail.reverse1_trade_order_id = dto.reverse1_trade_order_id
+
+    if dto.reverse2_trade_order_id is not None:
+        default_log.debug(f"Updating reverse2_trade_order_id to={dto.reverse2_trade_order_id}")
+        thread_detail.reverse2_trade_order_id = dto.reverse2_trade_order_id
+
+    if dto.reverse_trade_stop_loss is not None:
+        default_log.debug(f"Updating reverse_trade_stop_loss to={dto.reverse_trade_stop_loss}")
+        thread_detail.reverse_trade_stop_loss = dto.reverse_trade_stop_loss
+
+    if dto.reverse_trade_take_profit is not None:
+        default_log.debug(f"Updating reverse_trade_take_profit to={dto.reverse_trade_take_profit}")
+        thread_detail.reverse_trade_take_profit = dto.reverse_trade_take_profit
+
+    if dto.reverse_trade_tp_order_id is not None:
+        default_log.debug(f"Updating reverse_trade_tp_order_id to={dto.reverse_trade_tp_order_id}")
+        thread_detail.reverse_trade_tp_order_id = dto.reverse_trade_tp_order_id
+
+    if dto.reverse_trade_sl_order_id is not None:
+        default_log.debug(f"Updating reverse_trade_sl_order_id to={dto.reverse_trade_sl_order_id}")
+        thread_detail.reverse_trade_sl_order_id = dto.reverse_trade_sl_order_id
+
+    if dto.reverse1_entry_price is not None:
+        default_log.debug(f"Updating reverse1_entry_price to={dto.reverse1_entry_price}")
+        thread_detail.reverse1_entry_price = dto.reverse1_entry_price
+
+    if dto.reverse2_entry_price is not None:
+        default_log.debug(f"Updating reverse2_entry_price to={dto.reverse2_entry_price}")
+        thread_detail.reverse1_entry_price = dto.reverse2_entry_price
+
+    if dto.cover_sl_quantity is not None:
+        default_log.debug(f"Updating cover_sl_quantity to={dto.cover_sl_quantity}")
+        thread_detail.cover_sl_quantity = dto.cover_sl_quantity
+
+    if dto.cover_sl_trade_order_id is not None:
+        default_log.debug(f"Updating cover_sl_trade_order_id to={dto.cover_sl_trade_order_id}")
+        thread_detail.cover_sl_trade_order_id = dto.cover_sl_trade_order_id
+
+    if dto.extended_sl is not None:
+        default_log.debug(f"Updating extended_sl to={dto.extended_sl}")
+        thread_detail.extended_sl = dto.extended_sl
+
+    if dto.trade_alert_status is not None:
+        default_log.debug(f"Updating trade_alert_status to={dto.trade_alert_status}")
+        thread_detail.trade_alert_status = dto.trade_alert_status
+
+    if dto.extended_sl_timestamp is not None:
+        default_log.debug(f"Updating extended_sl_timestamp to={dto.extended_sl_timestamp}")
+        thread_detail.extended_sl_timestamp = dto.extended_sl_timestamp
 
     db.add(thread_detail)
 

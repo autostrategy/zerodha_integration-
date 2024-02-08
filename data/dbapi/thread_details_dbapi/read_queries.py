@@ -88,7 +88,17 @@ def fetch_all_event_details(session=None, close_session=True):
             quantity=int(thread_detail.trade1_quantity) if thread_detail.trade1_quantity is not None else None,
             extension_quantity_one=thread_detail.extension1_quantity,
             extension_quantity_two=thread_detail.extension2_quantity,
-            trade_status="COMPLETED" if thread_detail.is_completed else "PENDING"
+            extended_sl=thread_detail.extended_sl,
+            extended_sl_timestamp=thread_detail.extended_sl_timestamp,
+            cover_sl=thread_detail.cover_sl,
+            cover_sl_quantity=thread_detail.cover_sl_quantity,
+            reverse1_trade_quantity=thread_detail.reverse1_trade_quantity,
+            reverse2_trade_quantity=thread_detail.reverse2_trade_quantity,
+            reverse_trade_take_profit=thread_detail.reverse_trade_take_profit,
+            reverse_trade_stop_loss=thread_detail.reverse_trade_stop_loss,
+            reverse1_entry_price=thread_detail.reverse1_entry_price,
+            reverse2_entry_price=thread_detail.reverse2_entry_price,
+            trade_status=thread_detail.trade_alert_status
         )
 
         retval.append(event_detail)

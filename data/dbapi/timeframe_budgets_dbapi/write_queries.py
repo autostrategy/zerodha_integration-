@@ -15,6 +15,7 @@ def add_new_budget_setting(dto: AddBudgetSettingDTO, session=None, commit=True):
     db = session if session else next(get_db())
 
     timeframe_budget = TimeframeBudgets(
+        symbol=dto.symbol,
         time_frame=dto.time_frame,
         trades=dto.trades,
         budget=dto.budget_utilization,
@@ -52,6 +53,9 @@ def update_budget_setting(
         return None
 
     default_log.debug(f"Timeframe budget found for timeframe_budget_id ({dto.timeframe_budget_id}): {timeframe_budget}")
+
+    default_log.debug(f"Updating symbol from {timeframe_budget.symbol} to {dto.symbol}")
+    timeframe_budget.symbol = dto.symbol
 
     if dto.trades is not None:
         default_log.debug(f"Updating trades from {timeframe_budget.trades} to {dto.trades}")

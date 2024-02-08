@@ -19,4 +19,15 @@ class SingleEventDetailDTO(BaseModel):
     quantity: Optional[int]
     extension_quantity_one: Optional[int]
     extension_quantity_two: Optional[int]
-    trade_status: str
+    extended_sl: Optional[float]
+    extended_sl_timestamp: Optional[str]
+    cover_sl: Optional[float]
+    cover_sl_quantity: Optional[int]
+    # trade_status: str
+    reverse1_trade_quantity: Optional[int]
+    reverse2_trade_quantity: Optional[int]
+    reverse_trade_take_profit: Optional[float]
+    reverse_trade_stop_loss: Optional[float]
+    reverse1_entry_price: Optional[float]
+    reverse2_entry_price: Optional[float]
+    trade_status: Optional[str]

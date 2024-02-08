@@ -11,7 +11,7 @@ from data.enums.configuration import Configuration
 class CheckEventsDTO(BaseModel):
     symbol: str
     time_frame_in_minutes: str
-    signal_type: SignalType
+    signal_type: str
 
     @validator("time_frame_in_minutes")
     def validate_time_frame_in_minutes(cls, time_frame_in_minutes, **kwargs):

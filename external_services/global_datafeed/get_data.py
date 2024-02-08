@@ -12,7 +12,6 @@ from config import default_log, indices_list, endpoint, accesskey, sandbox_mode
 
 import websocket
 
-from data.enums.signal_type import SignalType
 import logic
 
 # to install this library.
@@ -40,6 +39,26 @@ trade_alerts_df = pd.DataFrame()
 
 started_backtesting = sandbox_mode
 backtest_feed_ticks_threads = dict()
+active_ticks_thread: list[threading.Thread] = []
+
+backtesting_status = 'INACTIVE'
+
+global_data_feed_connection_status = 'NOT CONNECTED'
+
+
+def get_backtesting_status():
+    global backtesting_status
+    default_log.debug(f"inside get_backtesting_status with backtesting_status={backtesting_status}")
+
+    return backtesting_status
+
+
+def get_global_data_feed_connection_status():
+    global global_data_feed_connection_status
+    default_log.debug(f"inside get_global_data_feed_connection_status with current status as "
+                      f"{global_data_feed_connection_status}")
+
+    return global_data_feed_connection_status
 
 
 def get_use_simulation_status():
@@ -117,7 +136,34 @@ def download_tick_data_for_symbols(backtest_date: datetime.date, symbols_list: l
     start_replaying_tick_data_of_symbols(symbols_list=symbols_list)
 
 
+def stop_all_active_tick_threads():
+    global active_ticks_thread
+    global symbols
+    default_log.debug(f"inside stop_all_active_tick_threads with {len(active_ticks_thread)} active threads")
+
+    try:
+        default_log.debug(f"Stopping {len(active_ticks_thread)} total threads")
+        for idx in range(len(active_ticks_thread)):
+            default_log.debug(f"Stopping thread: {active_ticks_thread[idx]}")
+            active_ticks_thread[idx].set()
+            default_log.debug(f"Stopped thread: {active_ticks_thread[idx]}")
+            active_ticks_thread.pop(idx)
+
+        for trading_symbol in symbols:
+            filename = f"{trading_symbol}-I_actual_response_ticks.csv"
+            default_log.debug(f"Deleting the ticks file with name={filename} as all ticks have been provided for "
+                              f"symbol={trading_symbol}")
+            os.remove(filename)
+
+            # Empty the data of the symbol
+            stop_providing_ticks_of_symbol(trading_symbol)
+    except Exception as e:
+        default_log.debug(f"An error occurred while stopping threads. Error: {e}")
+        return
+
+
 def start_replaying_tick_data_of_symbols(symbols_list: list[str]):
+    global active_ticks_thread
     default_log.debug(f"inside start_replaying_tick_data_of_symbols with symbols_list={symbols_list}")
     total_symbols = len(symbols_list)
 
@@ -138,7 +184,9 @@ def start_replaying_tick_data_of_symbols(symbols_list: list[str]):
         symbol_index = symbol + '-I'
 
         # Assuming feed_ticks_of_symbol takes the symbol_index as an argument
-        threading.Thread(target=feed_ticks_of_symbol, args=(symbol_index,)).start()
+        thread = threading.Thread(target=feed_ticks_of_symbol, args=(symbol_index,))
+        thread.start()
+        active_ticks_thread.append(thread)
         default_log.debug(f"Started Replaying ticks of symbol={symbol}")
 
     default_log.debug(f"Started Replaying ticks of symbols_list={symbols_list}")
@@ -166,7 +214,7 @@ def check_timestamp_and_start_event_checking(ist_timestamp: datetime, symbol: st
         symbol = row["Symbol"]
         time_frame = row["Timeframe"]
         alert_type = row["Alert Type"]
-        alert_type = SignalType.BUY if int(alert_type) == 1 else SignalType.SELL
+        alert_type = "1" if int(alert_type) == 1 else "2"
 
         dto = CheckEventsDTO(
             symbol=symbol,
@@ -176,6 +224,7 @@ def check_timestamp_and_start_event_checking(ist_timestamp: datetime, symbol: st
         default_log.debug(f"Starting Logging of Events for Symbol={symbol} having time_frame={str(time_frame)} and "
                           f"Signal Type is {alert_type} and alert_time={ist_timestamp}")
         logic.zerodha_integration_management.zerodha_integration_logic.log_event_trigger(dto, ist_timestamp)
+        time.sleep(2)
 
     default_log.debug(f"Marking all matching rows having symbol={symbol} and ist_timestamp equal to {ist_timestamp} "
                       f"tracking started as True")
@@ -186,6 +235,7 @@ def check_timestamp_and_start_event_checking(ist_timestamp: datetime, symbol: st
 
 def feed_ticks_of_symbol(symbol: str):
     global symbols
+    global backtesting_status
     default_log.debug(f"inside feed_ticks_of_symbol with symbol={symbol}")
     trading_symbol = symbol.split('-')[0]
     # Get the filename from symbol
@@ -201,7 +251,7 @@ def feed_ticks_of_symbol(symbol: str):
 
     # Reverse the order of symbol_ticks_df
     symbol_ticks_df = symbol_ticks_df.iloc[::-1].reset_index(drop=True)
-
+    backtesting_status = 'ACTIVE'
     for idx, row in symbol_ticks_df.iterrows():
         tick_data = row.to_dict()
 
@@ -209,7 +259,7 @@ def feed_ticks_of_symbol(symbol: str):
 
     time.sleep(2)  # sleep for 2 seconds before deleting all ticks as previous tick_callback would be processing the
     # ticks
-
+    backtesting_status = 'INACTIVE'
     # Remove the ticks file
     try:
         default_log.debug(f"Deleting the ticks file with name={filename} as all ticks have been provided for "
@@ -569,13 +619,15 @@ def GetExpiryDates(ws, index_symbol: str):
 def on_message(ws, message):
     global nfo_expiry_date_dict
     global started_backtesting
+    global global_data_feed_connection_status
     default_log.debug("Response : " + message)
     # Authenticate : {"Complete":true,"Message":"Welcome!","MessageType":"AuthenticateResult"}
     allures = message.split(',')
     strComplete = allures[0].split(':')
     result = str(strComplete[1])
     if result == "true":
-        print('AUTHENTICATED!!!')
+        default_log.debug('AUTHENTICATED!!!')
+        global_data_feed_connection_status = 'CONNECTED'
     else:
         data = json.loads(message)
 
@@ -636,10 +688,13 @@ def on_error(ws, error):
 
 
 def on_close(ws, *args):
+    global global_data_feed_connection_status
+    global_data_feed_connection_status = 'NOT CONNECTED'
     default_log.debug(f"inside websocket on_close with arguments={args}")
     default_log.debug("Reconnecting...")
-    websocket.setdefaulttimeout(30)
-    ws.connect(endpoint)
+    start_global_data_feed_server()
+    # websocket.setdefaulttimeout(30)
+    # ws.connect(endpoint)
 
 
 def on_open(ws):

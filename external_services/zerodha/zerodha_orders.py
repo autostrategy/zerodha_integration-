@@ -79,7 +79,7 @@ class KiteSandbox:
     VARIETY_REGULAR = "regular"
 
     def __init__(self):
-        self.url = "http://localhost:3000"
+        self.url = "http://localhost:3030"
 
     def place_order(self, variety, **order_params):
         default_log.debug(f"inside place order with variety={variety} and order_params={order_params}")
@@ -250,10 +250,22 @@ class KiteSandbox:
                 return []
 
 
+def get_zerodha_account_equity(kite: KiteConnect):
+    default_log.debug(f"inside get_zerodha_account_equity")
+    kite_account_margins = kite.margins()
+
+    kite_account_equity = kite_account_margins['equity']['available']['live_balance']
+
+    default_log.debug(f"Current Equity: {kite_account_equity}")
+
+    return kite_account_equity
+
+
 def store_access_token_of_kiteconnect(access_token: str):
     default_log.debug(f"inside store_access_token_of_kiteconnect with access_token={access_token}")
     global kite_access_token
 
+    save_access_token(access_token)
     kite_access_token = access_token
 
 

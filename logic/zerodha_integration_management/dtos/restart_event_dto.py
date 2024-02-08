@@ -30,3 +30,4 @@ class RestartEventDTO(BaseModel):
     extension2_order_id: Optional[str]
     extension1_quantity: Optional[int]
     extension2_quantity: Optional[int]
+    cover_sl: Optional[float]

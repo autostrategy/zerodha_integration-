@@ -6,7 +6,7 @@ from data.enums.trades import Trades
 
 
 class TimeframeBudgetDetailsDTO(BaseModel):
-    budget: BudgetPart
+    budget: int
     no_of_trades: Trades
     start_range: Optional[int]
     end_range: Optional[int]

@@ -7,3 +7,5 @@ from logic.zerodha_integration_management.dtos.trades_to_make_dto import TradesT
 class TimeframeBudgetAndTradesDetailsDTO(BaseModel):
     budget: Optional[float]
     trades_to_make: Optional[TradesToMakeDTO]
+    start_range: Optional[float]
+    end_range: Optional[float]

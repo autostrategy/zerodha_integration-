@@ -252,13 +252,17 @@ class KiteSandbox:
 
 def get_zerodha_account_equity(kite: KiteConnect):
     default_log.debug(f"inside get_zerodha_account_equity")
-    kite_account_margins = kite.margins()
+    try:
+        kite_account_margins = kite.margins()
 
-    kite_account_equity = kite_account_margins['equity']['available']['live_balance']
+        kite_account_equity = kite_account_margins['equity']['available']['live_balance']
 
-    default_log.debug(f"Current Equity: {kite_account_equity}")
+        default_log.debug(f"Current Equity: {kite_account_equity}")
 
-    return kite_account_equity
+        return kite_account_equity
+    except Exception as e:
+        default_log.debug(f"An error occurred while fetching zerodha account equity. Error: {e}")
+        return 0
 
 
 def store_access_token_of_kiteconnect(access_token: str):

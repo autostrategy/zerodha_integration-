@@ -1,3 +1,4 @@
+import os.path
 import threading
 from pathlib import Path
 import schedule
@@ -22,7 +23,7 @@ from external_services.global_datafeed.get_data import start_global_data_feed_se
 from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data, \
     get_access_token
 from logic.zerodha_integration_management.zerodha_integration_logic import restart_event_threads, \
-    store_all_symbol_budget, store_all_timeframe_budget
+    store_all_symbol_budget, store_all_timeframe_budget, set_zerodha_margin_value
 from standard_responses.standard_json_response import standard_json_response
 from api.symbol_budget_route_management.symbol_budget_crud_api import symbol_budget_router
 from api.kite_connect_route_management.kite_connect_api_routes import kite_connect_router
@@ -116,15 +117,19 @@ async def startup():
     # Load all timeframe budgets and trade details
     store_all_timeframe_budget()
 
+    if (not config.sandbox_mode) and os.path.exists("access_token.txt"):
+        # Set the equity
+        set_zerodha_margin_value()
+
     # GLOBAL FEED DATA SERVER
-    global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
+    # global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
     # Start the thread
-    global_feed_data_thread.start()
+    # global_feed_data_thread.start()
 
     # Wait 5 seconds till GLOBAL data feed is not authenticated
-    time.sleep(5)
-    restart_event_threads()
-    # pass
+    if not config.sandbox_mode:
+        time.sleep(5)
+        restart_event_threads()
 
 
 def create_app():

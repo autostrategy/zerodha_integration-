@@ -10,5 +10,5 @@ class AddBudgetSettingDTO(BaseModel):
     time_frame: Optional[str]
     trades: Trades
     budget_utilization: int
-    start_range: int
-    end_range: int
+    start_range: float
+    end_range: float

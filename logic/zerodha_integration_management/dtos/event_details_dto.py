@@ -68,4 +68,5 @@ class EventDetailsDTO(BaseModel):
     reverse_trade_sl_order_status: Optional[str]
     reverse_trade_tp_order_status: Optional[str]
     stop_tracking_further_events: Optional[bool]
+    range_issue: Optional[bool]
     extended_sl_timestamp: Optional[str]

@@ -9,7 +9,7 @@ from config import default_log, KITE_API_URL, zerodha_api_key, zerodha_api_secre
 from decorators.handle_generic_exception import frontend_api_generic_exception
 from external_services.zerodha.zerodha_orders import store_access_token_of_kiteconnect, \
     get_access_token_from_request_token
-from logic.zerodha_integration_management.zerodha_integration_logic import get_zerodha_equity
+from logic.zerodha_integration_management.zerodha_integration_logic import get_zerodha_equity, set_zerodha_margin_value
 from standard_responses.standard_json_response import standard_json_response
 
 kite_connect_router = APIRouter(prefix='/kite-connect', tags=['kite-connect'])
@@ -104,6 +104,29 @@ def get_kiteconnect_access_token_route(
     )
 
 
+@kite_connect_router.get('/reset-equity')
+def reset_equity_route(request: Request):
+    default_log.debug(f"inside reset_equity_route")
+
+    try:
+        # Set the equity
+        if os.path.exists("access_token.txt"):
+            zerodha_equity = set_zerodha_margin_value()
+
+            default_log.debug(f"Successfully resetted the zerodha equity to: {zerodha_equity}")
+            return standard_json_response(error=False, message="Successfully resetted zerodha equity", data={})
+        else:
+            default_log.debug(f"Access token has not been set for the zerodha account")
+            return standard_json_response(
+                error=True,
+                message="Access token has not been set for the zerodha account",
+                data={}
+            )
+    except Exception as e:
+        default_log.debug(f"An error occurred while resetting the kite account equity. Error: {e}")
+        return standard_json_response(error=True, message=f"An error occurred: {e}", data={})
+
+
 # This route handles the callback from Kite
 @kite_connect_router.get("/callback")
 async def callback(request: Request, request_token: str):
@@ -128,6 +151,16 @@ async def callback(request: Request, request_token: str):
         access_token = token_data['data']['access_token']
         default_log.debug(f"Access Token: {access_token}")
         store_access_token_of_kiteconnect(access_token)
+
+        # Setting the Zerodha Equity
+        try:
+            if os.path.exists("access_token.txt"):
+                zerodha_equity = set_zerodha_margin_value()
+
+                default_log.debug(f"Successfully set the zerodha equity to: {zerodha_equity}")
+        except Exception as e:
+            default_log.debug(f"An error occurred while setting the zerodha equity. Error: {e}")
+
         default_log.debug(f"Authorization successful")
         return RedirectResponse(homepage_url)
         # return standard_json_response(error=False, message="Authorization successful", data={})

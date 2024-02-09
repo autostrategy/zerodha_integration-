@@ -11,5 +11,5 @@ class TimeFrameBudgetDTO(BaseModel):
     time_frame: Optional[str]
     budget_utilization: int
     trades: Trades
-    start_range: Optional[int]
-    end_range: Optional[int]
+    start_range: Optional[float]
+    end_range: Optional[float]

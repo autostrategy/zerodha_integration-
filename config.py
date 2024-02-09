@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, time
 
 from pathlib import Path
 import logging
@@ -64,7 +65,7 @@ trade3_loss_percent = 0.25
 
 use_global_feed = True
 
-sandbox_mode = False  # used for simulation purpose set as TRUE when need to test using simulator
+sandbox_mode = True  # used for simulation purpose set as TRUE when need to test using simulator
 
 KITE_API_URL = "https://api.kite.trade"
 KITE_API_LOGIN_URL = "https://kite.zerodha.com"
@@ -77,6 +78,14 @@ buffer_for_indices_tp_trade = 0.0001
 
 initial_start_range = 0
 initial_end_range = 5
+
+# Stop Event Tracking after 14:45 IST or 9:15 UTC
+stop_trade_time = datetime.combine(datetime.now().date(), time(14, 45))
+
+backtest_zerodha_equity = 20000000
+take_reverse_trade = True
+
+close_open_position_time = "9:15"
 
 truedata_username = ""
 truedata_password = ""

@@ -12,6 +12,7 @@ from config import default_log, time_stamps, instrument_tokens_map, stop_trade_t
 from decorators.handle_generic_exception import frontend_api_generic_exception
 from external_services.global_datafeed.get_data import download_tick_data_for_symbols, start_backtesting, \
     get_use_simulation_status, get_global_data_feed_connection_status, get_backtesting_status
+from logic.live_trades_logic.get_live_trades_logic import get_live_trades_details
 from logic.zerodha_integration_management.get_event_details_logic import get_all_event_details
 from logic.zerodha_integration_management.zerodha_integration_logic import log_event_trigger
 from standard_responses.standard_json_response import standard_json_response
@@ -48,9 +49,10 @@ def check_event_triggers(
 
     try:
         use_simulation_status = get_use_simulation_status()
-        if (not use_simulation_status) and (not datetime.now() > stop_trade_time):
-            default_log.debug(f"As use_simulation_status is = {use_simulation_status} and current datetime "
-                              f"({datetime.now()}) < stop_trade_time ({stop_trade_time}) so starting live tracking")
+        # if (not use_simulation_status) and (not datetime.now() > stop_trade_time):
+        if not use_simulation_status:
+            # default_log.debug(f"As use_simulation_status is = {use_simulation_status} and current datetime "
+            #                   f"({datetime.now()}) < stop_trade_time ({stop_trade_time}) so starting live tracking")
             ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
             default_log.debug(f"Starting logging of events of dto={dto} and alert_time={ist_datetime}")
             log_event_trigger(dto, ist_datetime)
@@ -185,3 +187,25 @@ def get_backtesting_status_route(
 
     return standard_json_response(error=False, message="ok", data={'backtesting_status': backtesting_status})
 
+
+@event_router.get("/live-trades")
+@frontend_api_generic_exception
+def get_live_trades_route(request: Request):
+    default_log.debug(f"inside /live-trades")
+
+    live_trades = get_live_trades_details()
+
+    if live_trades is None:
+        default_log.debug(f"An error occurred while getting live trades details")
+        return standard_json_response(
+            error=True,
+            message="An error occurred while getting live trades details",
+            data={}
+        )
+
+    default_log.debug(f"{len(live_trades)} Live Trades Details returned: {live_trades}")
+    return standard_json_response(
+        error=False,
+        message="ok",
+        data=jsonable_encoder(live_trades)
+    )

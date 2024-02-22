@@ -148,6 +148,14 @@ def update_thread_event_details(dto: EventThreadDetailsDTO, thread_detail_id: in
         default_log.debug(f"Updating tp_value to={dto.tp_value}")
         thread_detail.tp_value = dto.tp_value
 
+    if dto.high_1 is not None:
+        default_log.debug(f"Updating high_1 to={dto.high_1}")
+        thread_detail.high_1 = dto.high_1
+
+    if dto.low_1 is not None:
+        default_log.debug(f"Updating low_1 to={dto.low_1}")
+        thread_detail.low_1 = dto.low_1
+
     if dto.tp_datetime is not None:
         default_log.debug(f"Updating tp_datetime to={dto.tp_datetime}")
         thread_detail.tp_datetime = dto.tp_datetime
@@ -271,6 +279,38 @@ def update_thread_event_details(dto: EventThreadDetailsDTO, thread_detail_id: in
     if dto.extended_sl_timestamp is not None:
         default_log.debug(f"Updating extended_sl_timestamp to={dto.extended_sl_timestamp}")
         thread_detail.extended_sl_timestamp = dto.extended_sl_timestamp
+
+    if dto.entry_trade_datetime is not None:
+        default_log.debug(f"Updating entry_trade_datetime to={dto.entry_trade_datetime}")
+        thread_detail.entry_trade_datetime = dto.entry_trade_datetime
+
+    if dto.extension1_trade_datetime is not None:
+        default_log.debug(f"Updating extension1_trade_datetime to={dto.extension1_trade_datetime}")
+        thread_detail.extension1_trade_datetime = dto.extension1_trade_datetime
+
+    if dto.extension2_trade_datetime is not None:
+        default_log.debug(f"Updating extension2_trade_datetime to={dto.extension2_trade_datetime}")
+        thread_detail.extension2_trade_datetime = dto.extension2_trade_datetime
+
+    if dto.sl_trade_datetime is not None:
+        default_log.debug(f"Updating sl_trade_datetime to={dto.sl_trade_datetime}")
+        thread_detail.sl_trade_datetime = dto.sl_trade_datetime
+
+    if dto.reverse1_trade_datetime is not None:
+        default_log.debug(f"Updating reverse1_trade_datetime to={dto.reverse1_trade_datetime}")
+        thread_detail.reverse1_trade_datetime = dto.reverse1_trade_datetime
+
+    if dto.reverse2_trade_datetime is not None:
+        default_log.debug(f"Updating reverse2_trade_datetime to={dto.reverse2_trade_datetime}")
+        thread_detail.reverse2_trade_datetime = dto.reverse2_trade_datetime
+
+    if dto.reverse_trade_tp_order_datetime is not None:
+        default_log.debug(f"Updating reverse_trade_tp_order_datetime to={dto.reverse_trade_tp_order_datetime}")
+        thread_detail.reverse_trade_tp_order_datetime = dto.reverse_trade_tp_order_datetime
+
+    if dto.reverse_trade_sl_order_datetime is not None:
+        default_log.debug(f"Updating reverse_trade_sl_order_datetime to={dto.reverse_trade_sl_order_datetime}")
+        thread_detail.reverse_trade_sl_order_datetime = dto.reverse_trade_sl_order_datetime
 
     db.add(thread_detail)
 

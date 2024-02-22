@@ -23,7 +23,33 @@ def get_all_incomplete_thread_details(session=None, close_session=True):
     thread_details = db.query(
         ThreadDetails
     ).filter(
-        ThreadDetails.is_completed == False
+        ThreadDetails.is_completed == False,
+        ThreadDetails.trade_alert_status != "NEXT DAY"
+    ).order_by(
+        ThreadDetails.id.asc()
+    ).all()
+
+    default_log.debug(f"{len(thread_details)} non completed threads retrieved")
+
+    return thread_details
+
+
+@dbapi_exception_handler
+def get_all_continuity_thread_details(session=None, close_session=True):
+    default_log.debug("inside get_all_incomplete_thread_details")
+
+    db = session if session else next(get_db())
+
+    # current_date = date.today()
+
+    # Adjust the time to midnight of the current date
+    # start_of_day = datetime.combine(current_date, datetime.min.time())
+    # end_of_day = datetime.combine(current_date, datetime.max.time())
+
+    thread_details = db.query(
+        ThreadDetails
+    ).filter(
+        ThreadDetails.trade_alert_status == "NEXT DAY"
     ).order_by(
         ThreadDetails.id.asc()
     ).all()
@@ -105,3 +131,30 @@ def fetch_all_event_details(session=None, close_session=True):
 
     default_log.debug(f"returning {len(retval)} event details")
     return retval
+
+
+@dbapi_exception_handler
+def get_thread_details_with_live_trade_sent(session=None, close_session=True):
+    default_log.debug(f"inside get_thread_details_with_live_trade_sent")
+
+    db = session if session else next(get_db())
+
+    query = """
+        SELECT 
+            * 
+        FROM THREAD_DETAILS 
+        WHERE 
+            SIGNAL_TRADE_ORDER_ID IS NOT NULL OR 
+            EXTENSION1_ORDER_ID IS NOT NULL OR
+            EXTENSION2_ORDER_ID IS NOT NULL OR
+            COVER_SL_TRADE_ORDER_ID IS NOT NULL OR 
+            REVERSE1_TRADE_ORDER_ID IS NOT NULL OR 
+            REVERSE2_TRADE_ORDER_ID IS NOT NULL 
+        ORDER BY ID DESC
+    """
+
+    thread_details = db.execute(query).all()
+
+    default_log.debug(f"{len(thread_details)} thread_details retrieved having at least one live trade sent")
+
+    return thread_details

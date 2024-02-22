@@ -45,7 +45,20 @@ def modify_symbol_budget(
 
     default_log.debug(f"Symbol budget found for symbol budget id ({id}): {symbol_budget}")
 
-    symbol_budget.symbol = dto.symbol
+    # LOGIC: If All Stocks has been sent then treat it as None
+    if dto.symbol is not None:
+        default_log.debug(f"As symbol budget symbol ({dto.symbol}) is not None. Checking if it is 'all stocks'")
+        if dto.symbol.lower() == "all stocks":
+            default_log.debug(f"As symbol is 'all stocks' therefore storing symbol as None for symbol_budget_id="
+                              f"{symbol_budget.id}")
+            symbol_budget.symbol = None
+        else:
+            default_log.debug(f"As symbol is not 'all stocks' therefore storing symbol as {dto.symbol} for "
+                              f"symbol_budget_id={symbol_budget.id}")
+            symbol_budget.symbol = dto.symbol
+    else:
+        symbol_budget.symbol = dto.symbol
+
     symbol_budget.time_frame = dto.time_frame
 
     symbol_budget.budget = dto.budget

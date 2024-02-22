@@ -4,6 +4,8 @@ from datetime import datetime, time
 from pathlib import Path
 import logging
 import json
+
+import pytz
 from dateutil.relativedelta import relativedelta
 
 # Flask
@@ -47,46 +49,41 @@ reset_password_url = 'http://localhost:5000/auth/process-reset-password-request'
 log_file = 'app.log'  # TODO: Create a directory, set owner and group and set log file path to
 # /var/log/project-name/app.log
 default_logger = 'console'
-
 no_of_candles_to_consider = 1000
-
 extension1_threshold_percent = 0.44
 extension2_threshold_percent = 0.75
-
 instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "INFY": 408065, "TECHM": 3465729, "BANKNIFTY": 260105, "NIFTY": 256265, "TCS": 2953217}
 symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 260105: "BANKNIFTY", 256265: "NIFTY", 2953217: "TCS"}
-
 time_stamps = ["1", "3", "5", "15"]
 indices_list = ["NIFTY", "BANKNIFTY", "SP500", "SENSEX"]
-
 trade1_loss_percent = 0.5
 trade2_loss_percent = 0.25
 trade3_loss_percent = 0.25
-
 use_global_feed = True
-
-sandbox_mode = True  # used for simulation purpose set as TRUE when need to test using simulator
-
+sandbox_mode = False  # used for simulation purpose set as TRUE when need to test using simulator
+zerodha_api_secret = ""
+zerodha_api_key = ""
+zerodha_access_token = ""
 KITE_API_URL = "https://api.kite.trade"
 KITE_API_LOGIN_URL = "https://kite.zerodha.com"
 homepage_url = "http://localhost:3000"
-
 buffer_for_entry_trade = 0.001
 buffer_for_tp_trade = 0.001
 buffer_for_indices_entry_trade = 0.0001
 buffer_for_indices_tp_trade = 0.0001
-
 initial_start_range = 0
 initial_end_range = 5
-
 # Stop Event Tracking after 14:45 IST or 9:15 UTC
 stop_trade_time = datetime.combine(datetime.now().date(), time(14, 45))
-
 backtest_zerodha_equity = 20000000
 take_reverse_trade = True
-
 close_open_position_time = "9:15"
-
+close_indices_position_time = datetime.combine(datetime.now().date(), time(15, 29), tzinfo=pytz.timezone("Asia/Kolkata"))  # UTC TIME "9:59"
+close_cash_trades_position_time = datetime.combine(datetime.now().date(), time(15, 20), tzinfo=pytz.timezone("Asia/Kolkata"))  # UTC TIME "9:50"
+market_start_time = datetime.combine(datetime.now().date(), time(9, 15), tzinfo=pytz.timezone("Asia/Kolkata"))  # UTC TIME "3:45"
+realtime_port = 8000
+endpoint = ""  # websocket link of global data feed
+accesskey = ""  # api key of global data feed
 truedata_username = ""
 truedata_password = ""
 secrets_file = Path(secrets_path)

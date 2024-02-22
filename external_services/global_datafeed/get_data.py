@@ -224,7 +224,7 @@ def check_timestamp_and_start_event_checking(ist_timestamp: datetime, symbol: st
         default_log.debug(f"Starting Logging of Events for Symbol={symbol} having time_frame={str(time_frame)} and "
                           f"Signal Type is {alert_type} and alert_time={ist_timestamp}")
         logic.zerodha_integration_management.zerodha_integration_logic.log_event_trigger(dto, ist_timestamp)
-        time.sleep(2)
+        time.sleep(1)
 
     default_log.debug(f"Marking all matching rows having symbol={symbol} and ist_timestamp equal to {ist_timestamp} "
                       f"tracking started as True")
@@ -292,6 +292,42 @@ def stop_providing_ticks_of_symbol(symbol: str):
 
         updated_symbols_list = [sym for sym in symbols if sym != symbol]
         symbols = updated_symbols_list
+    except Exception as e:
+        default_log.debug(f"An error occurred while clearing the data of symbol={symbol}. Error: {e}")
+
+
+def stop_providing_ticks_of_all_symbols():
+    global symbols
+    global symbols_interval_data
+    global symbol_ticks
+    global global_feedata_websocket
+    default_log.debug("inside stop_providing_ticks_of_all_symbols")
+
+    try:
+        all_symbols = symbols
+        for symbol in all_symbols:
+            default_log.debug(f"Clearing all symbol ticks for symbol={symbol}")
+            symbol_ticks[symbol] = []
+
+            symbol_timeframes = symbols_interval_data.get(symbol, None)
+            default_log.debug(f"Symbol Timeframes Details Returned for symbol={symbol} => {symbol_timeframes}")
+
+            if symbol_timeframes:
+                symbol_timeframes = symbol_timeframes.keys()
+                for time_frame in symbol_timeframes:
+                    symbols_interval_data[symbol][time_frame] = []
+
+            updated_symbols_list = [sym for sym in symbols if sym != symbol]
+            symbols = updated_symbols_list
+
+            # Stop the subscription for live ticks
+            default_log.debug(f"Stopping Subscribing of live ticks for symbol={symbol}")
+            instrument_identifier = symbol + '-I'
+            SubscribeRealtime(
+                ws=global_feedata_websocket,
+                instrument_identifier=instrument_identifier,
+                stop_subscribing=True
+            )
     except Exception as e:
         default_log.debug(f"An error occurred while clearing the data of symbol={symbol}. Error: {e}")
 
@@ -391,10 +427,19 @@ def process_symbol_ticks(symbol, time_frame):
         symbols_interval_data[symbol][time_frame] = []
         return
 
+    last_row = candles_interval_data.reset_index().iloc[-1]
     second_to_last_row = candles_interval_data.reset_index().iloc[-2]
 
     # Extract the relevant values for the columns 'open', 'high', 'low', 'close'
     last_row_json = {
+        'timestamp': last_row['Timestamp'],
+        'open': last_row['open'],
+        'high': last_row['high'],
+        'low': last_row['low'],
+        'close': last_row['close']
+    }
+
+    second_last_row_json = {
         'timestamp': second_to_last_row['Timestamp'],
         'open': second_to_last_row['open'],
         'high': second_to_last_row['high'],
@@ -403,7 +448,7 @@ def process_symbol_ticks(symbol, time_frame):
     }
 
     # Store the json data for the symbol, interval
-    json_data_for_symbol_interval = [last_row_json]
+    json_data_for_symbol_interval = [second_last_row_json, last_row_json]
 
     symbols_interval_data[symbol][time_frame] = json_data_for_symbol_interval
 

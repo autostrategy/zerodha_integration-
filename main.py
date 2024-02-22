@@ -19,11 +19,12 @@ from api.user_management.user_auth import auth_router
 from api.user_management.user_basic_api import user_router
 from api.event_management.event_managment_crud_api import event_router
 
-from external_services.global_datafeed.get_data import start_global_data_feed_server
+from external_services.global_datafeed.get_data import start_global_data_feed_server, \
+    stop_providing_ticks_of_all_symbols
 from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data, \
     get_access_token
 from logic.zerodha_integration_management.zerodha_integration_logic import restart_event_threads, \
-    store_all_symbol_budget, store_all_timeframe_budget, set_zerodha_margin_value
+    store_all_symbol_budget, store_all_timeframe_budget, set_zerodha_margin_value, continue_alerts
 from standard_responses.standard_json_response import standard_json_response
 from api.symbol_budget_route_management.symbol_budget_crud_api import symbol_budget_router
 from api.kite_connect_route_management.kite_connect_api_routes import kite_connect_router
@@ -86,8 +87,11 @@ def get_static_file_angular(path):
 
 
 def run_scheduled_task():
-    # Schedule the function to run at 3:20 PM IST
-    schedule.every().day.at("15:20").do(check_open_position_status_and_close)
+    # Schedule the function to run at 3:29 PM IST
+    schedule.every().day.at("15:29").do(check_open_position_status_and_close)
+
+    # Stop and unsubscribe the live ticks for the symbols at 3:35 PM IST
+    schedule.every().day.at("15:35").do(stop_providing_ticks_of_all_symbols)
 
     # Keep the scheduled task running in a separate thread
     while True:
@@ -122,14 +126,15 @@ async def startup():
         set_zerodha_margin_value()
 
     # GLOBAL FEED DATA SERVER
-    # global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
+    global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
     # Start the thread
-    # global_feed_data_thread.start()
+    global_feed_data_thread.start()
 
     # Wait 5 seconds till GLOBAL data feed is not authenticated
     if not config.sandbox_mode:
         time.sleep(5)
         restart_event_threads()
+        continue_alerts()
 
 
 def create_app():

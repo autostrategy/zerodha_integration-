@@ -8,7 +8,7 @@ import pytz
 from kiteconnect import KiteConnect
 
 from config import zerodha_api_key, symbol_tokens_map, use_global_feed, \
-    zerodha_access_token, zerodha_api_secret
+    zerodha_access_token, zerodha_api_secret, stop_trade_time
 from typing_extensions import Union
 
 from config import default_log, instrument_tokens_map
@@ -744,6 +744,17 @@ def place_zerodha_order(
                       f"average_price={average_price} ")
 
     try:
+
+        # Check if trade can be placed or not
+        # Stop Placing Trades after 14:45 IST or 9:15 UTC
+        use_simulation = get_use_simulation_status()
+        if not use_simulation:
+            if datetime.now() > stop_trade_time:
+                default_log.debug(f"Current Datetime ({datetime.now()}) is greater than Stop Trade Time "
+                                  f"({stop_trade_time}), so stopping event tracking for trading_symbol={trading_symbol}"
+                                  f"having exchange={exchange}")
+                return
+
         # Place a Market Order
         order_params = {
             "tradingsymbol": trading_symbol,
@@ -1029,17 +1040,20 @@ def get_status_of_zerodha_order(
 ):
     default_log.debug(f"inside get_status_of_zerodha_order(zerodha_order_id={zerodha_order_id})")
 
-    # Get order details
-    order_details = kite.order_history(zerodha_order_id)
+    try:
+        # Get order details
+        order_details = kite.order_history(zerodha_order_id)
 
-    # Check if the order exists and get its status
-    if order_details:
-        order_status = order_details[-1]["status"]
-        default_log.debug(f"Zerodha order status for id={zerodha_order_id} found ")
-        return order_status
-    else:
-        default_log.debug(f"Order details not found for Zerodha order id={zerodha_order_id}")
-        return None
+        # Check if the order exists and get its status
+        if order_details:
+            order_status = order_details[-1]["status"]
+            default_log.debug(f"Zerodha order status for id={zerodha_order_id} found ")
+            return order_status
+        else:
+            default_log.debug(f"Order details not found for Zerodha order id={zerodha_order_id}")
+            return None
+    except Exception as e:
+        default_log.debug(f"An error occurred while get zerodha order details for id={zerodha_order_id}. Error: {e}")
 
 
 def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_date: Optional[datetime] = None,
@@ -1101,7 +1115,7 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
                           f"with from_date={from_date} and to_date={to_date}: "
                           f"{sorted_historical_data}")
 
-        return [sorted_historical_data[-1]]
+        return sorted_historical_data
     except Exception as e:
         default_log.debug(
             f"An error occurred while fetching data from zerodha. Error: {e}")

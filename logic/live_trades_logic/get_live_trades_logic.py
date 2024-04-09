@@ -1,4 +1,4 @@
-from config import default_log
+from config import default_log, indices_list
 from data.dbapi.thread_details_dbapi.read_queries import get_thread_details_with_live_trade_sent
 from data.enums.signal_type import SignalType
 from logic.live_trades_logic.dtos.alert_trade_details_dto import AlertTradeDetailsDTO
@@ -22,9 +22,26 @@ def get_live_trades_details():
     # Loop through every thread_details
     for thread_detail in thread_details:
         signal_type = SignalType[thread_detail.signal_type]
+        symbol = thread_detail.symbol
+
+        is_indices_trade = True if symbol in indices_list else False
+
+        start_trade_signal_type = SignalType.SELL if signal_type == SignalType.BUY else SignalType.BUY
+        reverse_trade_start_signal_type = SignalType.BUY if signal_type == SignalType.BUY else SignalType.SELL
+        if is_indices_trade:
+            start_trade_signal_type = SignalType.BUY
+            reverse_trade_start_signal_type = SignalType.BUY
+
+        stop_trade_signal_type = SignalType.BUY if signal_type == SignalType.BUY else SignalType.SELL
+        reverse_stop_trade_signal_type = SignalType.SELL if signal_type == SignalType.BUY else SignalType.BUY
+
+        if is_indices_trade:
+            stop_trade_signal_type = SignalType.SELL
+            reverse_stop_trade_signal_type = SignalType.SELL
+
         # Check if entry trade has been sent
         entry_trade_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=start_trade_signal_type,
             quantity=thread_detail.trade1_quantity,
             trade_time=thread_detail.entry_trade_datetime,
             order_id=thread_detail.signal_trade_order_id
@@ -34,7 +51,7 @@ def get_live_trades_details():
 
         # Check if extension 1 trade has been sent
         extension1_trade_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=start_trade_signal_type,
             quantity=thread_detail.extension1_quantity,
             trade_time=thread_detail.extension1_trade_datetime,
             order_id=thread_detail.extension1_order_id
@@ -43,7 +60,7 @@ def get_live_trades_details():
 
         # Check if extension 2 trade has been sent
         extension2_trade_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=start_trade_signal_type,
             quantity=thread_detail.extension2_quantity,
             trade_time=thread_detail.extension2_trade_datetime,
             order_id=thread_detail.extension2_order_id
@@ -52,7 +69,7 @@ def get_live_trades_details():
 
         # Check if SL trade has been sent
         sl_trade_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=start_trade_signal_type,
             quantity=thread_detail.cover_sl_quantity,
             trade_time=thread_detail.sl_trade_datetime,
             order_id=thread_detail.cover_sl_trade_order_id
@@ -61,7 +78,7 @@ def get_live_trades_details():
 
         # Check if TAKE PROFIT trade has been sent
         take_profit_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=stop_trade_signal_type,
             quantity=thread_detail.extension_quantity,
             trade_time=thread_detail.tp_datetime,
             order_id=thread_detail.tp_order_id
@@ -69,7 +86,7 @@ def get_live_trades_details():
 
         # Check if STOP LOSS trade has been sent
         stop_loss_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=stop_trade_signal_type,
             quantity=thread_detail.extension_quantity,
             trade_time=thread_detail.sl_datetime,
             order_id=thread_detail.sl_order_id
@@ -77,7 +94,7 @@ def get_live_trades_details():
 
         # Check if REVERSE 1 trade has been sent
         reverse1_trade_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=reverse_trade_start_signal_type,
             quantity=thread_detail.reverse1_trade_quantity,
             trade_time=thread_detail.reverse1_trade_datetime,
             order_id=thread_detail.reverse1_trade_order_id
@@ -86,7 +103,7 @@ def get_live_trades_details():
 
         # Check if REVERSE 2 trade has been sent
         reverse2_trade_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=reverse_trade_start_signal_type,
             quantity=thread_detail.reverse2_trade_quantity,
             trade_time=thread_detail.reverse2_trade_datetime,
             order_id=thread_detail.reverse2_trade_order_id
@@ -95,7 +112,7 @@ def get_live_trades_details():
 
         # Check if REVERSE TAKE PROFIT trade has been sent
         reverse_tp_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=reverse_stop_trade_signal_type,
             quantity=thread_detail.total_reverse_trade_quantity,
             trade_time=thread_detail.reverse_trade_tp_order_datetime,
             order_id=thread_detail.reverse_trade_tp_order_id
@@ -103,7 +120,7 @@ def get_live_trades_details():
 
         # Check if REVERSE STOP LOSS trade has been sent
         reverse_sl_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=reverse_stop_trade_signal_type,
             quantity=thread_detail.total_reverse_trade_quantity,
             trade_time=thread_detail.reverse_trade_sl_order_datetime,
             order_id=thread_detail.reverse_trade_sl_order_id
@@ -111,13 +128,14 @@ def get_live_trades_details():
 
         # Check if REVERSE BEYOND trade has been sent
         reverse_beyond_detail_dto = TradeDetailDTO(
-            signal_type=signal_type,
+            signal_type=reverse_trade_start_signal_type,
             quantity=thread_detail.reverse_cover_sl_quantity,
             trade_time=thread_detail.reverse_cover_sl_trade_datetime,
             order_id=thread_detail.reverse_cover_sl_trade_order_id
         )
 
         new_alert_trade_details = AlertTradeDetailsDTO(
+            symbol=thread_detail.symbol,
             alert_time=thread_detail.alert_time,
             entry_trade_details=entry_trade_detail_dto,
             extension1_trade_details=extension1_trade_detail_dto,

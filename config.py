@@ -56,9 +56,9 @@ instrument_tokens_map = {"ICICIBANK": 1270529, "AXISBANK": 1510401, "INFY": 4080
 symbol_tokens_map = {1270529: "ICICIBANK", 1510401: "AXISBANK", 408065: "INFY", 3465729: "TECHM", 260105: "BANKNIFTY", 256265: "NIFTY", 2953217: "TCS"}
 time_stamps = ["1", "3", "5", "15"]
 indices_list = ["NIFTY", "BANKNIFTY", "SP500", "SENSEX"]
-trade1_loss_percent = 0.5
-trade2_loss_percent = 0.25
-trade3_loss_percent = 0.25
+trade1_loss_percent = 0.2
+trade2_loss_percent = 0.3
+trade3_loss_percent = 0.5
 use_global_feed = True
 sandbox_mode = False  # used for simulation purpose set as TRUE when need to test using simulator
 zerodha_api_secret = ""
@@ -76,16 +76,22 @@ initial_end_range = 5
 # Stop Event Tracking after 14:45 IST or 9:15 UTC
 stop_trade_time = datetime.combine(datetime.now().date(), time(14, 45))
 backtest_zerodha_equity = 20000000
-take_reverse_trade = True
+take_reverse_trade = False
 close_open_position_time = "9:15"
-close_indices_position_time = datetime.combine(datetime.now().date(), time(15, 29), tzinfo=pytz.timezone("Asia/Kolkata"))  # UTC TIME "9:59"
-close_cash_trades_position_time = datetime.combine(datetime.now().date(), time(15, 20), tzinfo=pytz.timezone("Asia/Kolkata"))  # UTC TIME "9:50"
-market_start_time = datetime.combine(datetime.now().date(), time(9, 15), tzinfo=pytz.timezone("Asia/Kolkata"))  # UTC TIME "3:45"
+close_indices_position_time = pytz.timezone("Asia/Kolkata").localize(datetime.combine(datetime.now().date(), time(15, 29)))  # UTC TIME "9:59"
+close_cash_trades_position_time = pytz.timezone("Asia/Kolkata").localize(datetime.combine(datetime.now().date(), time(15, 20)))  # UTC TIME "9:50"
+market_start_time = pytz.timezone("Asia/Kolkata").localize(datetime.combine(datetime.now().date(), time(9, 15)))  # UTC TIME "3:45"
+market_close_time = pytz.timezone("Asia/Kolkata").localize(datetime.combine(datetime.now().date(), time(15, 30)))  # UTC TIME "10:00"
 realtime_port = 8000
 endpoint = ""  # websocket link of global data feed
-accesskey = ""  # api key of global data feed
+accesskey = "4a02d1f1-1a15-45c9-a9e7-1636cfeb6016"  # api key of global data feed
 truedata_username = ""
 truedata_password = ""
+banknifty_symbol = "BANKNIFTY27MAR24FUT"
+zerodha_api_key = "w3j0a5u2wuvitqd9"
+zerodha_api_secret = "riqoyqedxua91cysfwrurvwf1bzaodmf"
+zerodha_access_token = "uNzP9bf6d6kX97bdTDGvAfIVu02lpKR0"
+can_place_order = False
 secrets_file = Path(secrets_path)
 
 if secrets_file.is_file():
@@ -162,6 +168,15 @@ LOGGING_CONFIG = {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'info'
+        },
+        'rotatingfilehandler': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': log_file,
+            'maxBytes': 1000000000,
+            'backupCount': 15,
+            'formatter': 'default',
+            'mode': 'a'
         }
     },
     'loggers': {
@@ -171,7 +186,7 @@ LOGGING_CONFIG = {
             'propogate': True,
         },
         'console': {
-            'handlers': ['consoledebughandler', 'debugfilehandler'],
+            'handlers': ['consoledebughandler', 'rotatingfilehandler'],
             'level': 'DEBUG',
             'propogate': True
         },
@@ -184,3 +199,21 @@ LOGGING_CONFIG = {
 }
 dictConfig(LOGGING_CONFIG)
 default_log = logging.getLogger(default_logger)
+
+
+# 'rotatingfilehandler': {
+#             'level': 'INFO',
+#             'class': 'logging.handlers.RotatingFileHandler',
+#             'filename': log_file,
+#             'maxBytes': 50000000,
+#             'backupCount': 20,
+#             'formatter': 'default',
+#             'mode': 'a'
+#         }
+
+# 'console': {
+#             'handlers': ['consoledebughandler', 'debugfilehandler', 'rotatingfilehandler'],
+#             'level': 'DEBUG',
+#             'propogate': True
+#         },
+

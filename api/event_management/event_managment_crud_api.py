@@ -50,12 +50,12 @@ def check_event_triggers(
     try:
         use_simulation_status = get_use_simulation_status()
         # if (not use_simulation_status) and (not datetime.now() > stop_trade_time):
-        if not use_simulation_status:
+        # if not use_simulation_status:
             # default_log.debug(f"As use_simulation_status is = {use_simulation_status} and current datetime "
             #                   f"({datetime.now()}) < stop_trade_time ({stop_trade_time}) so starting live tracking")
-            ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
-            default_log.debug(f"Starting logging of events of dto={dto} and alert_time={ist_datetime}")
-            log_event_trigger(dto, ist_datetime)
+        ist_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+        default_log.debug(f"Starting logging of events of dto={dto} and alert_time={ist_datetime}")
+        log_event_trigger(dto, ist_datetime)
         return standard_json_response(error=False, message="ok", data={})
     except Exception as e:
         default_log.debug(f"An error occurred while starting logging: {e}")

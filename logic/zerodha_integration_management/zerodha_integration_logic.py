@@ -13,7 +13,7 @@ from config import default_log, no_of_candles_to_consider, instrument_tokens_map
     trade2_loss_percent, trade3_loss_percent, indices_list, symbol_tokens_map, use_global_feed, \
     buffer_for_indices_entry_trade, buffer_for_indices_tp_trade, extension1_threshold_percent, \
     extension2_threshold_percent, stop_trade_time, backtest_zerodha_equity, take_reverse_trade, \
-    close_indices_position_time, close_cash_trades_position_time, market_start_time
+    close_indices_position_time, close_cash_trades_position_time, market_start_time, market_close_time
 from data.dbapi.symbol_budget_dbapi.read_queries import get_all_symbol_budgets
 from data.dbapi.thread_details_dbapi.dtos.event_thread_details_dto import EventThreadDetailsDTO
 from data.dbapi.thread_details_dbapi.read_queries import get_all_incomplete_thread_details, \
@@ -150,6 +150,7 @@ def allocate_equity_for_trade(equity_to_allocate: float):
                       f"current_equity={zerodha_margin}")
 
     equity_remaining = zerodha_margin - equity_to_allocate
+    zerodha_margin = equity_remaining
     default_log.debug(f"Remaining Equity = Rs. {equity_remaining} after allocating {equity_to_allocate}")
     return equity_remaining
 
@@ -264,31 +265,108 @@ def get_zerodha_equity():
 
 def round_to_nearest_multiplier(number, multiplier):
     """
-        Choose between multiples of multiplier based on their distance from x.
-        If the higher multiple is within threshold points of x, choose it. Otherwise, choose the lower multiple.
+    Choose between multiples of multiplier based on their distance from x.
+    If the higher multiple is within threshold points of x, choose it only if the lower multiple is not within
+    the threshold; otherwise, choose the lower multiple.
 
-        Args:
-            number: The number to compare against.
-            multiplier: The multiplier
+    Args:
+        number: The number to compare against.
+        multiplier: The multiplier
 
-        Returns:
-            The chosen multiple.
+    Returns:
+        The chosen multiple.
     """
-    threshold = 15
+    threshold = 24
     default_log.debug(f"inside round_to_nearest_multiplier with number={number} and multiplier={multiplier} and a "
                       f"threshold of {threshold} units")
+
+    # Special case: if the number is exactly divisible by the multiplier
+    if number % multiplier == 0:
+        default_log.debug(f"As the number ({number}) is exactly divisible by the multiplier ({multiplier}), "
+                          f"returning the lower multiple ({number})")
+        return number
+
+    # If the number is less than the lowest multiple of the multiplier, return the lowest multiple
+    if (number < multiplier) and (multiplier == 15) and (number >= 10):
+        default_log.debug(f"Number ({number}) is less than the lowest multiple of the multiplier ({multiplier}), "
+                          f"returning the lowest multiple ({multiplier})")
+        return multiplier
+
+    # if multiplier is 15 then quantity should more than or equal to 10 for BANKNIFTY
+    if (multiplier == 15) and (number < 10):
+        default_log.debug(f"As multiplier is {multiplier} and number ({number}) is not greater than or equal to 10 "
+                          f"so returning number ({number}) and won't round off the number")
+        return number
+
+    # For NIFTY
+    if (number == 50) and (number > 26) and (number < multiplier):
+        default_log.debug(f"As multiplier is {multiplier} and number ({number}) is greater than 26 and less than the "
+                          f"multiplier ({multiplier}) so rounding off to the multiplier {multiplier} and returning")
+        return multiplier
 
     lower_multiple = (number // multiplier) * multiplier
     higher_multiple = lower_multiple + multiplier
 
-    if abs(number - higher_multiple) <= threshold:
-        default_log.debug(f"Returning {higher_multiple} as the nearest multiple for multiplier={multiplier} and "
-                          f"number={number}")
-        return higher_multiple
-    else:
+    lower_difference = abs(number - lower_multiple)
+    higher_difference = abs(number - higher_multiple)
+
+    # Check if the number is closer to the lower multiple within the threshold
+    if lower_difference <= threshold and lower_difference < higher_difference:
         default_log.debug(f"Returning {lower_multiple} as the nearest multiple for multiplier={multiplier} and "
                           f"number={number}")
         return lower_multiple
+    # Check if the number is closer to the higher multiple within the threshold
+    elif higher_difference <= threshold and higher_difference < lower_difference:
+        default_log.debug(f"Returning {higher_multiple} as the nearest multiple for multiplier={multiplier} and "
+                          f"number={number}")
+        return higher_multiple
+    # If the number is not closer to either multiple within the threshold, return the lower multiple
+    else:
+        default_log.debug(f"Number ({number}) is not closer to either multiple within the threshold, "
+                          f"returning the lower multiple ({lower_multiple}).")
+        return lower_multiple
+
+
+# OLD LOGIC
+# def round_to_nearest_multiplier(number, multiplier):
+#     """
+#         Choose between multiples of multiplier based on their distance from x.
+#         If the higher multiple is within threshold points of x, choose it. Otherwise, choose the lower multiple.
+#
+#         Args:
+#             number: The number to compare against.
+#             multiplier: The multiplier
+#
+#         Returns:
+#             The chosen multiple.
+#     """
+#     threshold = 15
+#     default_log.debug(f"inside round_to_nearest_multiplier with number={number} and multiplier={multiplier} and a "
+#                       f"threshold of {threshold} units")
+#
+#     # Special case: if the number is exactly divisible by the multiplier
+#     if number % multiplier == 0:
+#         default_log.debug(f"As the number ({number}) is exactly divisible by the multiplier ({multiplier}), "
+#                           f"returning the lower multiple ({number})")
+#         return number
+#
+#     # if multiplier is 15 then quantity should more than or equal to 10
+#     if (multiplier == 15) and (number < 10):
+#         default_log.debug(f"As multiplier is {multiplier} and number ({number}) is not greater than or equal to 10 "
+#                           f"so returning number ({number}) and won't round off the number")
+#         return number
+#
+#     lower_multiple = (number // multiplier) * multiplier
+#     higher_multiple = lower_multiple + multiplier
+#
+#     if abs(number - higher_multiple) <= threshold:
+#         default_log.debug(f"Returning {higher_multiple} as the nearest multiple for multiplier={multiplier} and "
+#                           f"number={number}")
+#         return higher_multiple
+#     else:
+#         default_log.debug(f"Returning {lower_multiple} as the nearest multiple for multiplier={multiplier} and "
+#                           f"number={number}")
+#         return lower_multiple
 
 
 def place_indices_market_order(
@@ -365,6 +443,7 @@ def place_market_order(
         symbol: str,
         quantity: int,
         signal_type: SignalType,
+        exchange: str = "NSE",
         entry_price: Optional[float] = None
 ) -> Union[tuple[None, None], tuple[Any, Any]]:
     """
@@ -372,7 +451,7 @@ def place_market_order(
     """
     global use_simulation
     kite = get_kite_account_api()
-    default_log.debug(f"Inside place_market_order with symbol={symbol} "
+    default_log.debug(f"Inside place_market_order with symbol={symbol}, exchange={exchange} "
                       f"with quantity={quantity} and signal_type={signal_type} and entry_price={entry_price}")
 
     use_simulation = get_use_simulation_status()
@@ -383,7 +462,7 @@ def place_market_order(
             transaction_type=signal_type,
             quantity=quantity,
             average_price=entry_price,
-            exchange="NSE"
+            exchange=exchange
         )
     else:
         order_id = place_zerodha_order(
@@ -391,7 +470,7 @@ def place_market_order(
             trading_symbol=symbol,
             transaction_type=signal_type,
             quantity=quantity,
-            exchange="NSE"
+            exchange=exchange
         )
 
     if order_id is None:
@@ -432,6 +511,35 @@ def place_market_order(
                               f"for symbol={symbol} ")
             return None, None
         tm.sleep(2)  # sleep for 2 seconds
+
+
+def remove_sl_details_of_completed_trade(
+        symbol: str,
+        signal_type: SignalType,
+        time_frame: int
+):
+    global symbol_stop_loss_details
+    default_log.debug(f"inside remove_sl_details_of_completed_trade with symbol={symbol}, signal_type={signal_type} "
+                      f"and timeframe={time_frame} and symbol_stop_loss_details={symbol_stop_loss_details}")
+
+    # stop_loss_details={('NIFTY', <SignalType.BUY: 1>): {1: (22499.05, '2024-03-05 09:27 (1)')},
+    # ('NIFTY', <SignalType.SELL: 2>): {1: (22440.2, '2024-03-05 09:30 (1)')}}
+
+    # Check whether if symbol stop loss details already present
+    key = (symbol, signal_type)
+    symbol_stop_loss = symbol_stop_loss_details.get(key, None)
+    if symbol_stop_loss is None:
+        default_log.debug(f"Symbol stop loss not found for symbol ({symbol}) and time_frame ({time_frame}) "
+                          f"for signal_type={signal_type}")
+    else:
+        # Remove the SL details of the key
+        # Update the stop loss value of the symbol
+        if symbol_stop_loss.get(time_frame, None) is not None:
+            default_log.debug(f"Removing stop loss details for time_frame={time_frame} and key={key}")
+            del symbol_stop_loss_details[key][time_frame]
+        else:
+            default_log.debug(f"Stop Loss details not found for time_frame={time_frame} and key={key}")
+            return
 
 
 def store_sl_details_of_active_trade(
@@ -1725,7 +1833,8 @@ def calculate_tp(candle_data, event_data_dto: EventDetailsDTO, event1_signal_typ
 
 def trade_logic_sell(
         symbol: str, timeframe: str, candle_data: pd.DataFrame,
-        data_dictionary: dict[tuple[str, str], Optional[EventDetailsDTO]]
+        data_dictionary: dict[tuple[str, str], Optional[EventDetailsDTO]],
+        is_continuity: Optional[bool] = False
 ) -> tuple[EventDetailsDTO, dict[tuple[str, str], Optional[EventDetailsDTO]]]:
     """
     Checking of EVENTS
@@ -1807,9 +1916,9 @@ def trade_logic_sell(
         # If event 3 occurs before event 2
         if event_data_dto.event2_occur_time is None:
 
-            if timestamp.hour < event_data_dto.event1_occur_time.hour or \
-                    (timestamp.hour == event_data_dto.event1_occur_time.hour and
-                     timestamp.minute <= event_data_dto.event1_occur_time.minute):
+            if (timestamp.hour < event_data_dto.event1_occur_time.hour or
+                (timestamp.hour == event_data_dto.event1_occur_time.hour and
+                 timestamp.minute <= event_data_dto.event1_occur_time.minute)) and (not is_continuity):
                 default_log.debug(f"Current Timestamp ({timestamp}) is earlier/equal than Event 1 occur time "
                                   f"({event_data_dto.event1_occur_time}) for symbol={event_data_dto.symbol} and "
                                   f"time_frame={event_data_dto.time_frame}")
@@ -1828,6 +1937,21 @@ def trade_logic_sell(
                 data_dictionary[key] = event_data_dto
 
                 return event_data_dto, data_dictionary
+
+            # TODO: add a flow that updates highest and lowest point if continuity
+            if is_continuity:
+                # UPDATING THE HIGHEST AND LOWEST POINT BEFORE RETURNING
+                if highest_point is not None:
+                    default_log.debug(f"Updating the highest point from {event_data_dto.highest_point} to "
+                                      f"{highest_point} for symbol={symbol} having timeframe={timeframe}")
+                    event_data_dto.highest_point = highest_point
+
+                if lowest_point is not None:
+                    default_log.debug(f"Updating the lowest point from {event_data_dto.lowest_point} to "
+                                      f"{lowest_point} for symbol={symbol} having timeframe={timeframe}")
+                    event_data_dto.lowest_point = lowest_point
+
+                data_dictionary[key] = event_data_dto
 
             event1_candle_high = event_data_dto.event1_candle_high
             event1_candle_low = event_data_dto.event1_candle_low
@@ -1965,9 +2089,9 @@ def trade_logic_sell(
         # Check for event 3
         if (event_data_dto.event3_occur_time is None) and (event_data_dto.event2_occur_time is not None):
 
-            if timestamp.hour < event_data_dto.event2_occur_time.hour or \
-                    (timestamp.hour == event_data_dto.event2_occur_time.hour and
-                     timestamp.minute <= event_data_dto.event2_occur_time.minute):
+            if (timestamp.hour < event_data_dto.event2_occur_time.hour or
+                (timestamp.hour == event_data_dto.event2_occur_time.hour and
+                 timestamp.minute <= event_data_dto.event2_occur_time.minute)) and (not is_continuity):
                 default_log.debug(f"Current Timestamp ({timestamp}) is earlier/equal than Event 2 occur time "
                                   f"({event_data_dto.event2_occur_time}) for symbol={event_data_dto.symbol} and "
                                   f"time_frame={event_data_dto.time_frame}")
@@ -1993,19 +2117,19 @@ def trade_logic_sell(
 
             # candle_high_to_check = sell_candle_high if configuration == Configuration.HIGH else sell_candle_low
             if event_data_dto.symbol not in indices_list:
-                default_log.debug(f"Subtracting a buffer percent ({buffer_for_entry_trade}) from the sell_candle_low "
+                default_log.debug(f"Adding a buffer percent ({buffer_for_entry_trade}) from the sell_candle_low "
                                   f"({sell_candle_low}) as the breakpoint for event 3 for symbol={event_data_dto.symbol} "
                                   f"and time_frame={event_data_dto.time_frame}")
 
-                candle_high_to_check = sell_candle_low - (sell_candle_low * (buffer_for_entry_trade / 100))
+                candle_high_to_check = sell_candle_low + (sell_candle_low * (buffer_for_entry_trade / 100))
                 event_data_dto.event3_occur_breakpoint = candle_high_to_check
             else:
-                default_log.debug(f"Subtracting a buffer percent ({buffer_for_indices_entry_trade}) "
+                default_log.debug(f"Adding a buffer percent ({buffer_for_indices_entry_trade}) "
                                   f"from the sell_candle_low ({sell_candle_low}) as the breakpoint for "
                                   f"event 3 for symbol={event_data_dto.symbol} and "
                                   f"time_frame={event_data_dto.time_frame}")
 
-                candle_high_to_check = sell_candle_low - (sell_candle_low * (buffer_for_indices_entry_trade / 100))
+                candle_high_to_check = sell_candle_low + (sell_candle_low * (buffer_for_indices_entry_trade / 100))
                 event_data_dto.event3_occur_breakpoint = candle_high_to_check
 
             if current_candle_high > candle_high_to_check:
@@ -2094,20 +2218,24 @@ def trade_logic_sell(
             current_timestamp = candle_data['time']
             previous_tp_timestamp = event_data_dto.tp_values[-1].timestamp
 
-            if current_timestamp.hour < previous_tp_timestamp.hour or \
-                    (current_timestamp.hour == previous_tp_timestamp.hour and
-                     current_timestamp.minute < previous_tp_timestamp.minute):
-                default_log.debug(f"Current Timestamp ({current_timestamp}) is earlier than previous TP timestamp "
-                                  f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
-                                  f"time_frame={event_data_dto.time_frame}")
-                return event_data_dto, data_dictionary
+            # PREVIOUS TP Timestamp can be None when restart flow is working
+            if previous_tp_timestamp is not None:
+                if current_timestamp.hour < previous_tp_timestamp.hour or \
+                        (current_timestamp.hour == previous_tp_timestamp.hour and
+                         current_timestamp.minute < previous_tp_timestamp.minute):
+                    default_log.debug(f"Current Timestamp ({current_timestamp}) is earlier than previous TP timestamp "
+                                      f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
+                                      f"time_frame={event_data_dto.time_frame}")
+                    return event_data_dto, data_dictionary
 
-            elif (current_timestamp.hour == previous_tp_timestamp.hour and
-                  current_timestamp.minute < previous_tp_timestamp.minute):
-                default_log.debug(f"Current Timestamp ({current_timestamp}) is EQUAL to previous TP timestamp "
-                                  f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
-                                  f"time_frame={event_data_dto.time_frame}")
-                event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.BUY)
+                elif (current_timestamp.hour == previous_tp_timestamp.hour and
+                      current_timestamp.minute < previous_tp_timestamp.minute):
+                    default_log.debug(f"Current Timestamp ({current_timestamp}) is EQUAL to previous TP timestamp "
+                                      f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
+                                      f"time_frame={event_data_dto.time_frame}")
+                    event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.BUY)
+                else:
+                    event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.BUY)
             else:
                 event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.BUY)
 
@@ -2143,7 +2271,8 @@ def trade_logic_buy(
         symbol: str,
         timeframe: str,
         candle_data: pd.DataFrame,
-        data_dictionary: dict[tuple[str, str], Optional[EventDetailsDTO]]
+        data_dictionary: dict[tuple[str, str], Optional[EventDetailsDTO]],
+        is_continuity: Optional[bool] = False
 ) -> tuple[EventDetailsDTO, dict[tuple[str, str], Optional[EventDetailsDTO]]]:
     """
     Checking of EVENTS
@@ -2209,12 +2338,12 @@ def trade_logic_buy(
         # If event 3 occurs before event 2
         if event_data_dto.event2_occur_time is None:
 
-            if timestamp.hour < event_data_dto.event1_occur_time.hour or \
-                    (timestamp.hour == event_data_dto.event1_occur_time.hour and
-                     timestamp.minute <= event_data_dto.event1_occur_time.minute):
+            if (timestamp.hour < event_data_dto.event1_occur_time.hour or
+                (timestamp.hour == event_data_dto.event1_occur_time.hour and
+                 timestamp.minute <= event_data_dto.event1_occur_time.minute)) and (not is_continuity):
                 default_log.debug(f"Current Timestamp ({timestamp}) is earlier/equal than Event 1 occur time "
                                   f"({event_data_dto.event1_occur_time}) for symbol={event_data_dto.symbol} and "
-                                  f"time_frame={event_data_dto.time_frame}")
+                                  f"time_frame={event_data_dto.time_frame} and is_continuity={is_continuity}")
 
                 # UPDATING THE HIGHEST AND LOWEST POINT BEFORE RETURNING
                 if highest_point is not None:
@@ -2230,6 +2359,21 @@ def trade_logic_buy(
                 data_dictionary[key] = event_data_dto
 
                 return event_data_dto, data_dictionary
+
+            # TODO: add a flow that updates highest and lowest point if continuity
+            if is_continuity:
+                # UPDATING THE HIGHEST AND LOWEST POINT BEFORE RETURNING
+                if highest_point is not None:
+                    default_log.debug(f"Updating the highest point from {event_data_dto.highest_point} to "
+                                      f"{highest_point} for symbol={symbol} having timeframe={timeframe}")
+                    event_data_dto.highest_point = highest_point
+
+                if lowest_point is not None:
+                    default_log.debug(f"Updating the lowest point from {event_data_dto.lowest_point} to "
+                                      f"{lowest_point} for symbol={symbol} having timeframe={timeframe}")
+                    event_data_dto.lowest_point = lowest_point
+
+                data_dictionary[key] = event_data_dto
 
             buy_candle_high = event_data_dto.event1_candle_high
             buy_candle_low = event_data_dto.event1_candle_low
@@ -2357,9 +2501,9 @@ def trade_logic_buy(
         # Check for event 3
         if (event_data_dto.event3_occur_time is None) and (event_data_dto.event2_occur_time is not None):
 
-            if timestamp.hour < event_data_dto.event2_occur_time.hour or \
-                    (timestamp.hour == event_data_dto.event2_occur_time.hour and
-                     timestamp.minute <= event_data_dto.event2_occur_time.minute):
+            if (timestamp.hour < event_data_dto.event2_occur_time.hour or
+                (timestamp.hour == event_data_dto.event2_occur_time.hour and
+                 timestamp.minute <= event_data_dto.event2_occur_time.minute)) and (not is_continuity):
                 default_log.debug(f"Current Timestamp ({timestamp}) is earlier/equal than Event 2 occur time "
                                   f"({event_data_dto.event2_occur_time}) for symbol={event_data_dto.symbol} and "
                                   f"time_frame={event_data_dto.time_frame}")
@@ -2413,6 +2557,11 @@ def trade_logic_buy(
                 value_to_add_for_stop_loss_entry_price = -(
                         event_data_dto.highest_point - event_data_dto.lowest_point)
 
+                default_log.debug(f"Value to add to stop loss = {value_to_add_for_stop_loss_entry_price} using "
+                                  f"highest_point={event_data_dto.highest_point} and lowest_point="
+                                  f"{event_data_dto.lowest_point} for symbol={event_data_dto.symbol} having "
+                                  f"timeframe={event_data_dto.time_frame}")
+
                 if event_data_dto.adjusted_low is not None:
                     default_log.debug(f"Calculating combined difference using adjusted_low "
                                       f"({event_data_dto.adjusted_low}) and event1_candle_high "
@@ -2421,7 +2570,7 @@ def trade_logic_buy(
                     event_data_dto.sl_buffer = -event_data_dto.combined_height
                 else:
                     default_log.debug(f"Calculating sl buffer difference using event1_candle_high "
-                                      f"({event_data_dto.event1_candle_high}) and event1_candle_high "
+                                      f"({event_data_dto.event1_candle_high}) and event1_candle_low "
                                       f"({event_data_dto.event1_candle_low})")
                     event_data_dto.sl_buffer = -(event_data_dto.event1_candle_high - event_data_dto.event1_candle_low)
 
@@ -2486,20 +2635,24 @@ def trade_logic_buy(
             current_timestamp = candle_data['time']
             previous_tp_timestamp = event_data_dto.tp_values[-1].timestamp
 
-            if current_timestamp.hour < previous_tp_timestamp.hour or \
-                    (current_timestamp.hour == previous_tp_timestamp.hour and
-                     current_timestamp.minute < previous_tp_timestamp.minute):
-                default_log.debug(f"Current Timestamp ({current_timestamp}) is earlier than previous TP timestamp "
-                                  f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
-                                  f"time_frame={event_data_dto.time_frame}")
-                return event_data_dto, data_dictionary
+            # PREVIOUS TP Timestamp can be None when restart flow is working
+            if previous_tp_timestamp is not None:
+                if current_timestamp.hour < previous_tp_timestamp.hour or \
+                        (current_timestamp.hour == previous_tp_timestamp.hour and
+                         current_timestamp.minute < previous_tp_timestamp.minute):
+                    default_log.debug(f"Current Timestamp ({current_timestamp}) is earlier than previous TP timestamp "
+                                      f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
+                                      f"time_frame={event_data_dto.time_frame}")
+                    return event_data_dto, data_dictionary
 
-            elif (current_timestamp.hour == previous_tp_timestamp.hour and
-                  current_timestamp.minute < previous_tp_timestamp.minute):
-                default_log.debug(f"Current Timestamp ({current_timestamp}) is EQUAL to previous TP timestamp "
-                                  f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
-                                  f"time_frame={event_data_dto.time_frame}")
-                event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.SELL)
+                elif (current_timestamp.hour == previous_tp_timestamp.hour and
+                      current_timestamp.minute < previous_tp_timestamp.minute):
+                    default_log.debug(f"Current Timestamp ({current_timestamp}) is EQUAL to previous TP timestamp "
+                                      f"({previous_tp_timestamp}) for symbol={event_data_dto.symbol} and "
+                                      f"time_frame={event_data_dto.time_frame}")
+                    event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.SELL)
+                else:
+                    event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.SELL)
             else:
                 event_data_dto = calculate_tp(candle_data, event_data_dto, SignalType.SELL)
 
@@ -3440,6 +3593,7 @@ def start_market_logging_for_buy(
     trades_made = 0
 
     is_restart = False
+    is_continuity = False
     extension_diff = None
 
     tried_creating_entry_order = False
@@ -3468,7 +3622,11 @@ def start_market_logging_for_buy(
 
     total_budget_used = 0
 
-    indices_quantity_multiplier = 50 if symbol == "NIFTY" else 45
+    reached_extension1_point = False
+    reached_extension2_point = False
+
+    # 50 FOR NIFTY AND 15 FOR BANKNIFTY
+    indices_quantity_multiplier = 50 if symbol == "NIFTY" else 15
     initial_event1_done = False
 
     dto = None
@@ -3611,6 +3769,7 @@ def start_market_logging_for_buy(
             reverse1_trade_quantity=reverse1_trade_quantity,
             reverse2_trade_quantity=reverse2_trade_quantity,
             entry_trade_order_id=trade1_order_id,
+            entry_price=entry_price,
             extension1_trade_order_id=extension1_order_id,
             extension2_trade_order_id=extension2_order_id,
             cover_sl_trade_order_id=cover_sl_trade_order_id,
@@ -3685,9 +3844,11 @@ def start_market_logging_for_buy(
 
             if extension1_order_id is not None:
                 tried_creating_extension1_order = True
+                reached_extension1_point = True
 
             if extension2_order_id is not None:
                 tried_creating_extension2_order = True
+                reached_extension2_point = True
 
             if cover_sl_trade_order_id is not None:
                 tried_creating_cover_sl_trade = True
@@ -3702,6 +3863,7 @@ def start_market_logging_for_buy(
                 tried_creating_reverse_cover_sl_trade = True
 
     elif continuity_dto is not None:
+        is_continuity = True
         thread_detail_id = continuity_dto.thread_id
 
         # ALERT SYMBOL AND TIMEFRAME DETAIL
@@ -3856,9 +4018,11 @@ def start_market_logging_for_buy(
 
         if extension1_order_id is not None:
             tried_creating_extension1_order = True
+            reached_extension1_point = True
 
         if extension2_order_id is not None:
             tried_creating_extension2_order = True
+            reached_extension2_point = True
 
         if cover_sl_trade_order_id is not None:
             tried_creating_cover_sl_trade = True
@@ -3878,10 +4042,17 @@ def start_market_logging_for_buy(
         try:
             if current_time < market_start_time:
                 wait_time_in_seconds = (market_start_time - current_time).seconds
-                default_log.debug(f"As Current Time ({current_time}) < Market Start Time ({market_start_time}) so waiting "
-                                  f"{wait_time_in_seconds} seconds before continuing alert tracking for symbol={symbol} "
-                                  f"having timeframe={timeframe}")
+                wait_time_in_seconds += ((60 * int(timeframe)) + 5)  # Adding a 5-second buffer
+                default_log.debug(
+                    f"As Current Time ({current_time}) < Market Start Time ({market_start_time}) so waiting "
+                    f"{wait_time_in_seconds} seconds before continuing alert tracking for symbol={symbol} "
+                    f"having timeframe={timeframe}")
                 tm.sleep(wait_time_in_seconds)
+            else:
+                default_log.debug(
+                    f"As Current Time ({current_time}) >= Market Start Time ({market_start_time}) so starting "
+                    f"subscribing for realtime ticks for alert tracking for symbol={symbol} "
+                    f"having timeframe={timeframe}")
         except Exception as e:
             default_log.debug(f"An error occurred while checking if current time ({current_time}) was less than the "
                               f"market_start_time {market_start_time} for continuing alert for symbol={symbol} having "
@@ -3898,8 +4069,6 @@ def start_market_logging_for_buy(
             default_log.debug(f"No data received from ZERODHA for symbol={symbol}"
                               f"and timeframe={timeframe}")
             return None
-
-        initial_event1_done = True
 
     else:
         # Not restarted flow
@@ -3943,6 +4112,10 @@ def start_market_logging_for_buy(
             default_log.debug(f"An error occurred while storing thread event details in database: {response.error}")
             return False
 
+        if not (len(data) > 1):
+            # todo: remove this if using global data feed
+            initial_event1_done = True
+
         thread_detail_id = response
 
     while True:
@@ -3953,61 +4126,15 @@ def start_market_logging_for_buy(
         if prev_timestamp is None:
             prev_timestamp = timestamp
 
-        # This Flow skips first Candle
-        # if not is_restart:
-        #     if not use_current_candle:  # use_current_candle = True and is_restart = False (not True and not False) => False and True => False
-        #         if current_time is None:
-        #             current_time = data.iloc[-1]["time"]
-        #
-        #         next_time = data.iloc[-1]["time"]
-        #         default_log.debug(f"Current Time ({current_time}) and Next Time ({next_time}) for symbol={symbol} "
-        #                           f"having timeframe={timeframe}")
-        #         # next_time = 13:55
-        #         # current_time = 13:50
-        #         # 55 <= 50 False
-        #         if next_time.minute <= current_time.minute:
-        #             data = get_next_data(
-        #                 is_restart=is_restart,
-        #                 timeframe=timeframe,
-        #                 instrument_token=instrument_token,
-        #                 interval=interval,
-        #                 from_timestamp=data.iloc[-1]["time"]
-        #             )
-        #
-        #             if data is None:
-        #                 default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-        #                                   f"and timeframe={timeframe}")
-        #                 break
-        #             continue
-        #         else:
-        #             use_current_candle = True
-        #
-        #             data = get_next_data(
-        #                 is_restart=is_restart,
-        #                 timeframe=timeframe,
-        #                 instrument_token=instrument_token,
-        #                 interval=interval,
-        #                 from_timestamp=data.iloc[-1]["time"]
-        #             )
-        #
-        #             if data is None:
-        #                 default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-        #                                   f"and timeframe={timeframe}")
-        #                 break
-        #             continue
-
         if initial_event1_done:
-            dto, data_dictionary = trade_logic_sell(symbol, timeframe, data.iloc[-1], data_dictionary)
+            dto, data_dictionary = trade_logic_sell(symbol, timeframe, data.iloc[-1], data_dictionary, is_continuity)
             dto.current_candle_low = data.iloc[-1]["low"]
             dto.current_candle_high = data.iloc[-1]["high"]
         else:
-            dto, data_dictionary = trade_logic_sell(symbol, timeframe, data.iloc[-2], data_dictionary)
+            dto, data_dictionary = trade_logic_sell(symbol, timeframe, data.iloc[-2], data_dictionary, is_continuity)
             dto.current_candle_low = data.iloc[-2]["low"]
             dto.current_candle_high = data.iloc[-2]["high"]
             initial_event1_done = True
-
-        # dto.current_candle_low = data.iloc[-1]["low"]
-        # dto.current_candle_high = data.iloc[-1]["high"]
 
         # Adding a check of if stop_tracking_further_events is True then break out and mark thread as completed
         if dto.stop_tracking_further_events:
@@ -4015,30 +4142,6 @@ def start_market_logging_for_buy(
                               f"as stop_tracking_further_events={dto.stop_tracking_further_events}")
             opposite_issue = True
             break
-
-        # This part prevents the thread_details to be committed till next candle (after event 1) is formed
-        # Commented it out
-        # if timestamp.hour < dto.event1_occur_time.hour or \
-        #         (timestamp.hour == dto.event1_occur_time.hour and
-        #          timestamp.minute <= dto.event1_occur_time.minute):
-        #     default_log.debug(f"Current Timestamp ({timestamp}) is earlier/equal than Event 1 occur time "
-        #                       f"({dto.event1_occur_time}) for symbol={dto.symbol} and "
-        #                       f"time_frame={dto.time_frame}")
-        #
-        #     data = get_next_data(
-        #         is_restart=is_restart,
-        #         timeframe=timeframe,
-        #         instrument_token=instrument_token,
-        #         interval=interval,
-        #         from_timestamp=data.iloc[-1]["time"]
-        #     )
-        #
-        #     if data is None:
-        #         default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-        #                           f"and timeframe={timeframe}")
-        #         break
-        #
-        #     continue
 
         if dto.event2_occur_time is not None:
             # CHECK RANGE ISSUE
@@ -4145,21 +4248,12 @@ def start_market_logging_for_buy(
 
         if (dto.event2_occur_time is not None) and (dto.event3_occur_time is not None):
 
-            # Stop Event Tracking after 14:45 IST or 9:15 UTC
-            # use_simulation = get_use_simulation_status()
-            # if not use_simulation:
-            #     if datetime.now() > stop_trade_time:
-            #         default_log.debug(f"Current Datetime ({datetime.now()}) is greater than Stop Trade Time "
-            #                           f"({stop_trade_time}), so stopping event tracking for symbol={symbol} having "
-            #                           f"timeframe={timeframe}")
-            #
-            #         break
-
             # TODO: Move this to a proper place
             use_simulation = get_use_simulation_status()
             # if not use_simulation:
             if ((dto.entry_trade_order_id is not None) or (dto.extension1_trade_order_id is not None) or
-                (dto.extension2_trade_order_id is not None) or (dto.cover_sl_trade_order_id is not None)) and \
+                (dto.extension2_trade_order_id is not None) or (dto.cover_sl_trade_order_id is not None) or
+                (dto.reverse1_trade_order_id is not None) or (dto.reverse2_trade_order_id is not None)) and \
                     (not use_simulation):
 
                 current_time = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
@@ -4217,6 +4311,7 @@ def start_market_logging_for_buy(
                             symbol=symbol,
                             quantity=close_position_quantity,
                             signal_type=SignalType.BUY,
+                            exchange="NSE",
                             entry_price=data.iloc[-1]['high']
                         )
 
@@ -4237,69 +4332,6 @@ def start_market_logging_for_buy(
                                           f"{indices_symbol} having timeframe={timeframe} as current_time "
                                           f"({current_time}) >= close_indices_position_time "
                                           f"({close_indices_position_time})")
-
-            # If stop trade time i.e. 14:45 IST has been hit then only do calculations and don't take any trades
-            if ((dto.entry_trade_order_id is None) and (dto.extension1_trade_order_id is None) and
-                (dto.extension2_trade_order_id is None) and (dto.cover_sl_trade_order_id is None)) and \
-                    (not use_simulation):
-
-                current_time = datetime.now()
-                if current_time >= stop_trade_time:
-                    trade_alert_status = "NO TRADE TIME"
-                    default_log.debug(f"As current time ({current_time}) >= stop_trade_time {stop_trade_time} and Entry"
-                                      f" Trade Order ID={dto.entry_trade_order_id}, Extension 1 Trade Order ID="
-                                      f"{dto.extension1_trade_order_id}, Extension 2 Trade Order ID="
-                                      f"{dto.extension2_trade_order_id}, SL Trade Order ID="
-                                      f"{dto.cover_sl_trade_order_id} for symbol={symbol} having time_frame={timeframe}")
-
-                    # Store the current state of event in the database
-                    response = store_current_state_of_event(
-                        thread_detail_id=thread_detail_id,
-                        symbol=symbol,
-                        time_frame=timeframe,
-                        signal_type=SignalType.BUY,
-                        trade_alert_status=trade_alert_status,
-                        configuration=configuration,
-                        is_completed=False,
-                        dto=dto
-                    )
-
-                    if not response:
-                        default_log.debug(f"An error occurred while storing thread event details in database")
-                        return False
-
-                    data = get_next_data(
-                        is_restart=is_restart,
-                        timeframe=timeframe,
-                        instrument_token=instrument_token,
-                        interval=interval,
-                        from_timestamp=data.iloc[-1]["time"]
-                    )
-
-                    if data is None:
-                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                          f"and timeframe={timeframe}")
-
-                        # Store the current state of event in the database
-                        response = store_current_state_of_event(
-                            thread_detail_id=thread_detail_id,
-                            symbol=symbol,
-                            time_frame=timeframe,
-                            signal_type=SignalType.BUY,
-                            trade_alert_status=trade_alert_status,
-                            configuration=configuration,
-                            is_completed=True,
-                            dto=dto
-                        )
-
-                        if not response:
-                            default_log.debug(f"An error occurred while storing thread event details in database")
-                            return False
-
-                        return
-
-                    # Continue calculating the take profit and stop loss but DON'T TAKE TRADE
-                    continue
 
             # find out how many trades needs to be made and the budget to be used
             # get the initial close price
@@ -4392,6 +4424,127 @@ def start_market_logging_for_buy(
                         break
 
                     default_log.debug(f"Indices symbol retrieved={indices_symbol}")
+
+            # If stop trade time i.e. 14:45 IST has been hit then only do calculations and don't take any trades
+            if ((dto.entry_trade_order_id is None) and (dto.extension1_trade_order_id is None) and
+                (dto.extension2_trade_order_id is None) and (dto.cover_sl_trade_order_id is None)) and \
+                    (not use_simulation):
+
+                current_time = datetime.now()
+                if current_time >= stop_trade_time:
+
+                    # CHECKING IF TP LEVEL REACHED
+                    tp_value = dto.tp_values[-1].tp_with_buffer
+                    candle_low = data.iloc[-1]['low']
+                    current_close_price = data.iloc[-1]['close']
+
+                    if current_close_price <= tp_value:
+                        default_log.debug(
+                            f"Current Candle Close ({current_close_price}) <= TP value ({tp_value}) for indices_"
+                            f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
+                            f"Before placing any order as so EXITING the alert tracking")
+                        break
+
+                    # TODO: CHECKING IF SL LEVEL REACHED
+                    sl_value = dto.sl_value + (2 * dto.sl_buffer)
+
+                    trade_alert_status = "NO TRADE TIME"
+                    default_log.debug(
+                        f"As current time ({current_time}) >= stop_trade_time {stop_trade_time} and Entry"
+                        f" Trade Order ID={dto.entry_trade_order_id}, Extension 1 Trade Order ID="
+                        f"{dto.extension1_trade_order_id}, Extension 2 Trade Order ID="
+                        f"{dto.extension2_trade_order_id}, SL Trade Order ID="
+                        f"{dto.cover_sl_trade_order_id} for symbol={symbol} having time_frame={timeframe}")
+
+                    # Store the current state of event in the database
+                    response = store_current_state_of_event(
+                        thread_detail_id=thread_detail_id,
+                        symbol=symbol,
+                        time_frame=timeframe,
+                        signal_type=SignalType.BUY,
+                        trade_alert_status=trade_alert_status,
+                        configuration=configuration,
+                        is_completed=False,
+                        dto=dto
+                    )
+
+                    if not response:
+                        default_log.debug(f"An error occurred while storing thread event details in database")
+                        return False
+
+                    data = get_next_data(
+                        is_restart=is_restart,
+                        timeframe=timeframe,
+                        instrument_token=instrument_token,
+                        interval=interval,
+                        from_timestamp=data.iloc[-1]["time"]
+                    )
+
+                    if data is None:
+                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+                                          f"and timeframe={timeframe}")
+
+                        # Store the current state of event in the database
+                        response = store_current_state_of_event(
+                            thread_detail_id=thread_detail_id,
+                            symbol=symbol,
+                            time_frame=timeframe,
+                            signal_type=SignalType.BUY,
+                            trade_alert_status=trade_alert_status,
+                            configuration=configuration,
+                            is_completed=True,
+                            dto=dto
+                        )
+
+                        if not response:
+                            default_log.debug(
+                                f"An error occurred while storing thread event details in database")
+                            return False
+
+                        return
+
+                    # Continue calculating the take profit and stop loss but DON'T TAKE TRADE
+                    continue
+
+            # Flow to check if current time is greater than 15:30 IST then mark the alert as NEXT DAY for continuing
+            use_simulation = get_use_simulation_status()
+            if not use_simulation:
+                current_timestamp = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+                try:
+                    if current_timestamp > market_close_time:
+                        default_log.debug(
+                            f"As current timestamp ({current_timestamp}) > market close time ({market_close_time})"
+                            f" so stopping the alert tracking and marking the status of the alert as NEXT DAY "
+                            f"of symbol={symbol} having timeframe={timeframe}")
+
+                        # Mark the status as NEXT DAY for the alert and return
+                        # Store the current state of event in the database
+                        response = store_current_state_of_event(
+                            thread_detail_id=thread_detail_id,
+                            symbol=symbol,
+                            time_frame=timeframe,
+                            signal_type=SignalType.BUY,
+                            trade_alert_status="NEXT DAY",
+                            configuration=configuration,
+                            is_completed=True,
+                            dto=dto
+                        )
+
+                        if not response:
+                            default_log.debug(
+                                f"An error occurred while storing thread event details in database")
+                            return False
+
+                        return
+                    else:
+                        default_log.debug(f"Not marking the status of the alert as NEXT DAY as current timestamp "
+                                          f"({current_timestamp}) < market close time ({market_close_time}) for symbol={symbol}"
+                                          f" having timestamp={timestamp}")
+                except Exception as e:
+                    default_log.debug(f"An error occurred while checking if current timestamp ({current_timestamp}) > "
+                                      f"market close time ({market_close_time}) for symbol={symbol} having "
+                                      f"timeframe={timeframe}. Error: {e}")
+
             # ======================================================================================= #
 
             # Placing the entry MARKET order trade
@@ -4433,7 +4586,7 @@ def start_market_logging_for_buy(
                             f"As trade1_quantity ({trade1_quantity}) 0 so skipping placing MARKET "
                             f"order for symbol={symbol} and indices_symbol={indices_symbol} having "
                             f"timeframe={timeframe}")
-                        dto.trade1_quantity = trade1_quantity
+                        # dto.trade1_quantity = trade1_quantity
                         dto.tp_order_status = 'OPEN'
                         dto.sl_order_status = 'OPEN'
                     elif (trade1_quantity % indices_quantity_multiplier) != 0:
@@ -4442,7 +4595,7 @@ def start_market_logging_for_buy(
                             f"multiplier ({indices_quantity_multiplier}) so skipping placing MARKET "
                             f"order for symbol={symbol} and indices_symbol={indices_symbol} having "
                             f"timeframe={timeframe}")
-                        dto.trade1_quantity = trade1_quantity
+                        # dto.trade1_quantity = trade1_quantity
                         dto.tp_order_status = 'OPEN'
                         dto.sl_order_status = 'OPEN'
                     else:
@@ -4463,12 +4616,13 @@ def start_market_logging_for_buy(
                                               f"{indices_symbol} and symbol={symbol} having timeframe={timeframe} "
                                               f"with quantity={trade1_quantity}")
 
+                            # TODO: changed here
                             # As TRADE 1 failed so set the trade 1 quantity as zero
-                            dto.trade1_quantity = 0
-                            dto.extension_quantity = 0
+                            # dto.trade1_quantity = 0
+                            # dto.extension_quantity = 0
 
                             # Set tried_creating_entry_order as false
-                            tried_creating_entry_order = False
+                            # tried_creating_entry_order = False
 
                         else:
                             dto.entry_trade_order_id = entry_trade_order_id
@@ -4524,6 +4678,7 @@ def start_market_logging_for_buy(
                         symbol=symbol,
                         signal_type=SignalType.SELL,
                         quantity=trade1_quantity,
+                        exchange="NSE",
                         entry_price=entry_price
                     )
 
@@ -4533,11 +4688,11 @@ def start_market_logging_for_buy(
                                           f"with quantity={trade1_quantity}")
 
                         # As TRADE 1 failed so set the trade 1 quantity as zero
-                        dto.trade1_quantity = 0
-                        dto.extension_quantity = 0
+                        # dto.trade1_quantity = 0
+                        # dto.extension_quantity = 0
 
                         # Set tried_creating_entry_order as false
-                        tried_creating_entry_order = False
+                        # tried_creating_entry_order = False
 
                     else:
                         dto.entry_trade_order_id = entry_trade_order_id
@@ -4591,6 +4746,7 @@ def start_market_logging_for_buy(
 
                 candle_low = data.iloc[-1]['low']
                 candle_high = data.iloc[-1]['high']
+                current_close_price = data.iloc[-1]['close']
 
                 # CHECK IF TP OR SL HAS BEEN HIT
                 tp_value = dto.tp_values[-1].tp_with_buffer
@@ -4598,17 +4754,33 @@ def start_market_logging_for_buy(
 
                 quantity = dto.extension_quantity if dto.extension_quantity is not None else dto.trade1_quantity
 
-                if candle_low <= tp_value:
-                    default_log.debug(f"Current Candle Low ({candle_low}) <= TP value ({tp_value}) for indices_"
-                                      f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
-                                      f"So placing MARKET order with quantity={quantity} and "
-                                      f"signal_type={SignalType.BUY}")
+                if (current_close_price <= tp_value) and (dto.tp_order_id is None) and \
+                        (dto.tp_order_status != 'COMPLETE') and (dto.sl_order_id is None):
+                    # TODO: Remove SL details from SL dictionary
+                    try:
+                        default_log.debug(f"As Take Profit level has been hit for symbol={symbol} having timeframe="
+                                          f"{timeframe} with signal_type=BUY. So removing the SL details of the alert")
+                        remove_sl_details_of_completed_trade(
+                            symbol=symbol,
+                            signal_type=SignalType.BUY,
+                            time_frame=int(timeframe)
+                        )
+                    except Exception as e:
+                        default_log.debug(f"An error occurred while removing SL details for the COMPLETED trade having "
+                                          f"symbol={symbol} and timeframe={timeframe}")
+
+                    default_log.debug(
+                        f"Current Candle Close ({current_close_price}) <= TP value ({tp_value}) for indices_"
+                        f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
+                        f"So placing MARKET order with quantity={quantity} and "
+                        f"signal_type={SignalType.BUY}")
 
                     if indices_symbol is None:
                         tp_order_id, fill_price = place_market_order(
                             symbol=symbol,
                             signal_type=SignalType.BUY,
                             quantity=quantity,
+                            exchange="NSE",
                             entry_price=tp_value
                         )
 
@@ -4665,9 +4837,23 @@ def start_market_logging_for_buy(
                     # break
 
                 # Check SL hit or not
-                elif candle_high >= sl_value:
+                elif (current_close_price >= sl_value) and (dto.sl_order_id is None) and \
+                        (dto.sl_order_status != 'COMPLETE') and (dto.tp_order_id is None):
+                    # TODO: Remove SL details from SL dictionary
+                    try:
+                        default_log.debug(f"As Take Profit level has been hit for symbol={symbol} having timeframe="
+                                          f"{timeframe} with signal_type=BUY. So removing the SL details of the alert")
+                        remove_sl_details_of_completed_trade(
+                            symbol=symbol,
+                            signal_type=SignalType.BUY,
+                            time_frame=int(timeframe)
+                        )
+                    except Exception as e:
+                        default_log.debug(f"An error occurred while removing SL details for the COMPLETED trade having "
+                                          f"symbol={symbol} and timeframe={timeframe}")
+
                     default_log.debug(
-                        f"Current Candle High ({candle_high}) >= SL value ({sl_value}) for indices_symbol="
+                        f"Current Candle Close ({current_close_price}) >= SL value ({sl_value}) for indices_symbol="
                         f"{indices_symbol} and symbol={symbol} and time_frame={timeframe}. So placing MARKET (SL-M) "
                         f"order with quantity={quantity} and signal_type={SignalType.BUY}")
 
@@ -4676,6 +4862,7 @@ def start_market_logging_for_buy(
                             symbol=symbol,
                             signal_type=SignalType.BUY,
                             quantity=quantity,
+                            exchange="NSE",
                             entry_price=sl_value
                         )
 
@@ -4703,7 +4890,7 @@ def start_market_logging_for_buy(
                             break
 
                     else:
-                        sl_order_id = place_indices_market_order(
+                        sl_order_id, fill_price = place_indices_market_order(
                             indice_symbol=indices_symbol,
                             signal_type=SignalType.SELL,
                             quantity=quantity,
@@ -4741,11 +4928,13 @@ def start_market_logging_for_buy(
                 # CHECKING IF TP LEVEL REACHED
                 tp_value = dto.tp_values[-1].tp_with_buffer
                 candle_low = data.iloc[-1]['low']
+                current_close_price = data.iloc[-1]['close']
 
-                if candle_low <= tp_value:
-                    default_log.debug(f"Current Candle Low ({candle_low}) <= TP value ({tp_value}) for indices_"
-                                      f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
-                                      f"Before placing any order as so EXITING the alert tracking")
+                if current_close_price <= tp_value:
+                    default_log.debug(
+                        f"Current Candle Close ({current_close_price}) <= TP value ({tp_value}) for indices_"
+                        f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
+                        f"Before placing any order as so EXITING the alert tracking")
                     dto.trade1_quantity = dto.actual_calculated_trade1_quantity if dto.actual_calculated_trade1_quantity is not None else 0
                     dto.extension1_quantity = dto.actual_calculated_extension1_quantity if dto.actual_calculated_extension1_quantity is not None else 0
                     dto.extension2_quantity = dto.actual_calculated_extension2_quantity if dto.actual_calculated_extension2_quantity is not None else 0
@@ -5096,7 +5285,7 @@ def start_market_logging_for_buy(
 
             # Extra Trade placing logic
             # Place extra trade if candle high goes ABOVE by a threshold value
-            if (extension_diff is not None) and (trades_made < maximum_trades_to_make) and \
+            if (extension_diff is not None) and \
                     ((dto.tp_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])
                      and (dto.sl_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])) and \
                     (trades_details_dto.trades_to_make.extension1_trade or
@@ -5108,6 +5297,7 @@ def start_market_logging_for_buy(
 
                 extension_time_stamp = data.iloc[-1]["time"]
                 candle_high_price = data.iloc[-1]["high"]
+                current_close_price = data.iloc[-1]['close']
 
                 default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
                                   f"and candle_high_price = {candle_high_price} at timestamp = {extension_time_stamp}")
@@ -5115,44 +5305,107 @@ def start_market_logging_for_buy(
                 # entry_price_difference = abs(dto.sl_value - candle_high_price)
                 entry_price_difference = abs(dto.sl_value - dto.entry_price)
 
-                if tried_creating_extension1_order and trades_details_dto.trades_to_make.extension1_trade:
-                    default_log.debug(f"Extension 1 trade has been made as Extension 1 Trade order id="
-                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
-                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
-                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 2 "
-                                      f"trade threshold percent={extension2_threshold_percent}")
-                    threshold_percent = extension2_threshold_percent
-                else:
-                    default_log.debug(f"Extension 1 trade has not been made as Extension 1 Trade order id="
-                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
-                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
-                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 1 "
-                                      f"trade threshold percent={extension1_threshold_percent}")
-                    threshold_percent = extension1_threshold_percent
+                # if tried_creating_extension1_order and trades_details_dto.trades_to_make.extension1_trade:
+                #     default_log.debug(f"Extension 1 trade has been made as Extension 1 Trade order id="
+                #                       f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                #                       f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                #                       f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 2 "
+                #                       f"trade threshold percent={extension2_threshold_percent}")
+                #     threshold_percent = extension2_threshold_percent
+                # else:
+                #     default_log.debug(f"Extension 1 trade has not been made as Extension 1 Trade order id="
+                #                       f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                #                       f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                #                       f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 1 "
+                #                       f"trade threshold percent={extension1_threshold_percent}")
+                #     threshold_percent = extension1_threshold_percent
+
+                extension1_point = dto.entry_price + (extension_diff * extension1_threshold_percent)
+                extension2_point = dto.entry_price + (extension_diff * extension2_threshold_percent)
+
+                if (current_close_price >= extension1_point) and not reached_extension1_point:
+                    default_log.debug(f"Reached Extension 1 Point as current_close_price ({current_close_price}) <= "
+                                      f"Extension 1 point ({extension1_point}) with entry_price={dto.entry_price}, "
+                                      f"extension_diff={extension_diff} for symbol={symbol} having "
+                                      f"timeframe={timeframe}")
+                    reached_extension1_point = True
+                    threshold_point = extension1_point
+                    threshold = (extension_diff * extension1_threshold_percent)
+                    entry_price_difference = abs(dto.sl_value - threshold_point)
+
+                    default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
+                                      f"at timestamp = {extension_time_stamp} and "
+                                      f"current_close_price={current_close_price} and threshold={threshold} and "
+                                      f"threshold_point={threshold_point} and Entry Price Difference="
+                                      f"{entry_price_difference}")
+
+                if (current_close_price >= extension2_point) and not reached_extension2_point:
+                    default_log.debug(f"Reached Extension 2 Point as current_close_price ({current_close_price}) <= "
+                                      f"Extension 2 point ({extension2_point}) with entry_price={dto.entry_price}, "
+                                      f"extension_diff={extension_diff} for symbol={symbol} having "
+                                      f"timeframe={timeframe}")
+                    reached_extension2_point = True
+                    threshold_point = extension2_point
+                    threshold = (extension_diff * extension2_threshold_percent)
+                    entry_price_difference = abs(dto.sl_value - threshold_point)
+
+                    default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
+                                      f"at timestamp = {extension_time_stamp} and "
+                                      f"current_close_price={current_close_price} and threshold={threshold} and "
+                                      f"threshold_point={threshold_point} and Entry Price Difference="
+                                      f"{entry_price_difference}")
 
                 # threshold = extension_diff * (config_threshold_percent * trades_made)
-                threshold = extension_diff * threshold_percent
-                threshold_point = dto.entry_price + threshold
+                # threshold = extension_diff * threshold_percent
+                # threshold_point = dto.entry_price + threshold
 
-                default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
-                                  f"at timestamp = {extension_time_stamp} and "
-                                  f"current_candle_high={candle_high_price} and threshold={threshold} and "
-                                  f"threshold_point={threshold_point} ")
+                # default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
+                #                   f"at timestamp = {extension_time_stamp} and "
+                #                   f"current_candle_high={candle_high_price} and threshold={threshold} and "
+                #                   f"threshold_point={threshold_point} ")
 
                 # if entry_price_difference >= threshold:
-                if candle_high_price >= threshold_point:
+                # if candle_high_price >= threshold_point:
+                # if current_close_price >= threshold_point:
+                if reached_extension1_point or reached_extension2_point:
                     default_log.debug(
                         f"[EXTENSION] Creating EXTENSION trade as Entry Price = {dto.entry_price} "
                         f"and SL value = {dto.sl_value} "
-                        f"and candle_high_price = {candle_high_price} "
+                        f"and current_close_price = {current_close_price} "
                         f"at timestamp = {extension_time_stamp} "
-                        f"Current Candle High {candle_high_price} >= "
-                        f"Threshold Point {threshold_point}")
+                        f"Reached Extension 1 Point={reached_extension1_point} and "
+                        f"Reached Extension 2 Point={reached_extension2_point}")
+
+                    # Check if entry trade was placed or not
+                    # if (dto.entry_trade_order_id is None) and trades_details_dto.trades_to_make.entry_trade and \
+                    #         not tried_creating_entry_order and (reached_extension1_point or reached_extension2_point):
+                    #     # This condition will occur only when an attempt was made to place entry trade but failed
+                    #     # So don't place entry trade and mark tried_creating_entry_order as True
+                    #     default_log.debug(f"As Entry Trade order id={dto.entry_trade_order_id} and Make Entry Trade="
+                    #                       f"{trades_details_dto.trades_to_make.entry_trade} and tried_creating_entry_"
+                    #                       f"order={tried_creating_entry_order} and current_close_price="
+                    #                       f"{current_close_price} and reached_extension1_point="
+                    #                       f"{reached_extension1_point}, reached_extension2_point="
+                    #                       f"{reached_extension2_point} so will stop "
+                    #                       f"trying to place entry trade and place extension trade")
+                    #     tried_creating_entry_order = True
+
+                    # Check if extension 1 trade was placed or not
+                    # if (dto.extension1_trade_order_id is None) and trades_details_dto.trades_to_make.extension1_trade and \
+                    #         not tried_creating_extension1_order and reached_extension2_point:
+                    #     default_log.debug(
+                    #         f"As Extension 1 Trade order id={dto.extension1_trade_order_id} and Make Extension 1 Trade="
+                    #         f"{trades_details_dto.trades_to_make.extension1_trade} and tried_creating_extension1_order="
+                    #         f"{tried_creating_entry_order} and current_close_price="
+                    #         f"{current_close_price} and reached_extension2_point="
+                    #         f"{reached_extension2_point} so will stop "
+                    #         f"trying to place extension 1 trade and place extension 2 trade")
+                    #     tried_creating_extension1_order = True
 
                     # PLACING EXTENSION 2 ORDER
                     # If first extension trade is already done placing second extension trade
                     if tried_creating_extension1_order and (not tried_creating_extension2_order) and \
-                            (dto.extension2_trade_order_id is None):
+                            (dto.extension2_trade_order_id is None) and reached_extension2_point:
                         # If first two trades were placed then check if third trade needs to be placed or not
                         if trades_details_dto.trades_to_make.extension2_trade:
                             tried_creating_extension2_order = True
@@ -5291,13 +5544,13 @@ def start_market_logging_for_buy(
                                             f"indices_symbol={indices_symbol} with quantity={total_quantity}")
 
                                         if ((dto.trade1_quantity is None) or (dto.trade1_quantity == 0)) and \
-                                                ((dto.extension1_quantity is None) and (dto.extension1_quantity == 0)):
+                                                ((dto.extension1_quantity is None) or (dto.extension1_quantity == 0)):
                                             dto.extension_quantity = 0
-
-                                        dto.extension2_quantity = 0
+                                        # todo: changed here
+                                        # dto.extension2_quantity = 0
 
                                         # Set tried_creating_extension2_order as false
-                                        tried_creating_extension2_order = False
+                                        # tried_creating_extension2_order = False
 
                                     else:
                                         dto.extension2_trade_order_id = extension_order_id
@@ -5366,6 +5619,7 @@ def start_market_logging_for_buy(
                                     symbol=symbol,
                                     signal_type=SignalType.SELL,
                                     quantity=total_quantity,
+                                    exchange="NSE",
                                     entry_price=candle_high_price
                                 )
 
@@ -5377,11 +5631,11 @@ def start_market_logging_for_buy(
                                     if ((dto.trade1_quantity is None) or (dto.trade1_quantity == 0)) and \
                                             ((dto.extension1_quantity is None) and (dto.extension1_quantity == 0)):
                                         dto.extension_quantity = 0
-
-                                    dto.extension2_quantity = 0
+                                    # todo: changed here
+                                    # dto.extension2_quantity = 0
 
                                     # Set tried_creating_extension2_order as false
-                                    tried_creating_extension2_order = False
+                                    # tried_creating_extension2_order = False
 
                                 else:
                                     dto.extension2_trade_order_id = extension_order_id
@@ -5475,9 +5729,9 @@ def start_market_logging_for_buy(
                                 f"[EXTENSION] Not placing Extension 2 trade has extension 2 trade "
                                 f"condition is {trades_details_dto.trades_to_make.extension2_trade}")
 
-                    # Making Extension 1 trade
+                    # PLACING EXTENSION 1 ORDER
                     elif tried_creating_entry_order and (not tried_creating_extension1_order) and \
-                            (dto.extension1_trade_order_id is None):
+                            (dto.extension1_trade_order_id is None) and reached_extension1_point:
                         # If first trade was placed then check if second trade needs to be placed or not
                         if trades_details_dto.trades_to_make.extension1_trade:
                             tried_creating_extension1_order = True
@@ -5569,11 +5823,11 @@ def start_market_logging_for_buy(
 
                                         if (dto.trade1_quantity is None) or (dto.trade1_quantity == 0):
                                             dto.extension_quantity = 0
-
-                                        dto.extension1_quantity = 0
+                                        # todo: changed here
+                                        # dto.extension1_quantity = 0
 
                                         # Set tried_creating_extension1_order as false
-                                        tried_creating_extension1_order = False
+                                        # tried_creating_extension1_order = False
 
                                     else:
                                         dto.extension1_trade_order_id = extension_order_id
@@ -5631,6 +5885,7 @@ def start_market_logging_for_buy(
                                     symbol=symbol,
                                     signal_type=SignalType.SELL,
                                     quantity=total_quantity,
+                                    exchange="NSE",
                                     entry_price=candle_high_price
                                 )
 
@@ -5643,10 +5898,11 @@ def start_market_logging_for_buy(
                                     if (dto.trade1_quantity is None) or (dto.trade1_quantity == 0):
                                         dto.extension_quantity = 0
 
-                                    dto.extension1_quantity = 0
+                                    # todo: changed here
+                                    # dto.extension1_quantity = 0
 
                                     # Set tried_creating_extension1_order as false
-                                    tried_creating_extension1_order = False
+                                    # tried_creating_extension1_order = False
 
                                 else:
                                     dto.extension1_trade_order_id = extension_order_id
@@ -5813,10 +6069,9 @@ def start_market_logging_for_buy(
                 else:
                     default_log.debug(
                         f"Extension Trade condition not met as values: extension_diff={extension_diff} "
-                        f"trades_made={trades_made}, threshold_percent={threshold_percent} "
-                        f"entry_price={entry_price} and sl_value={dto.sl_value} and threshold: {threshold}"
-                        f"and candle_high_price: {candle_high_price} < threshold point: {threshold_point} "
-                        f"and symbol={symbol} and indices_symbol={indices_symbol} and "
+                        f"trades_made={trades_made}, entry_price={entry_price} and sl_value={dto.sl_value} "
+                        f"and reached_extension1_point: {reached_extension1_point} and reached_extension2_point: "
+                        f"{reached_extension2_point} and symbol={symbol} and indices_symbol={indices_symbol} and "
                         f"Make Extension 1 trade={trades_details_dto.trades_to_make.extension1_trade} "
                         f"and Make Extension 2 trade={trades_details_dto.trades_to_make.extension2_trade} ")
 
@@ -5841,6 +6096,7 @@ def start_market_logging_for_buy(
                                   f"with stop_loss={dto.sl_value} with quantity={dto.extension_quantity}")
 
                 candle_high_price = data.iloc[-1]['high']
+                candle_close_price = data.iloc[-1]['close']
 
                 # This case can occur when only SL Trade (COVER SL) need to be placed
                 if dto.extension_quantity is None:
@@ -5848,7 +6104,8 @@ def start_market_logging_for_buy(
                                       f"BEYOND EXTENSION Trade using Entry Price ({dto.entry_price}) and SL Value "
                                       f"({dto.sl_value}) with loss_percent of 100% for symbol={symbol} having timeframe"
                                       f"={timeframe}")
-                    beyond_extension_quantity = (1 * loss_budget) / abs(dto.entry_price - dto.sl_value)
+                    # beyond_extension_quantity = (1 * loss_budget) / abs(dto.entry_price - dto.sl_value)
+                    beyond_extension_quantity = (1 * loss_budget) / abs(candle_close_price - dto.sl_value)
                     dto.extension_quantity = int(round(beyond_extension_quantity, 0))
                     default_log.debug(f"[BEYOND EXTENSION] Rounded off beyond_extension_quantity="
                                       f"{beyond_extension_quantity} to {dto.extension_quantity} for symbol={symbol} "
@@ -5908,7 +6165,9 @@ def start_market_logging_for_buy(
                                           f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
 
                         # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                        tried_creating_cover_sl_trade = False
+                        # tried_creating_cover_sl_trade = False
+                        short_quantity_issue = True
+                        break
 
                     else:
                         default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
@@ -5932,9 +6191,9 @@ def start_market_logging_for_buy(
                                 f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
 
                             # Even if equity is less, then also retry when equity is enough
-                            tried_creating_cover_sl_trade = False
-                            # not_enough_equity = True
-                            # break
+                            # tried_creating_cover_sl_trade = True
+                            not_enough_equity = True
+                            break
                         else:
                             remaining_equity = allocate_equity_for_trade(total_budget_required)
                             default_log.debug(
@@ -5951,6 +6210,7 @@ def start_market_logging_for_buy(
                         symbol=symbol,
                         quantity=dto.extension_quantity,
                         signal_type=SignalType.SELL,
+                        exchange="NSE",
                         entry_price=candle_high_price
                     )
 
@@ -5960,7 +6220,9 @@ def start_market_logging_for_buy(
                         default_log.debug(f"[BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
                                           f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
                         # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                        tried_creating_cover_sl_trade = False
+                        # tried_creating_cover_sl_trade = False
+                        short_quantity_issue = True
+                        break
                     else:
                         default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
                                           f"id={cover_sl_trade_order_id} for symbol={symbol} having time_frame="
@@ -5983,9 +6245,9 @@ def start_market_logging_for_buy(
                                 f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
 
                             # Even if equity is less, then also retry when equity is enough
-                            tried_creating_cover_sl_trade = False
-                            # not_enough_equity = True
-                            # break
+                            # tried_creating_cover_sl_trade = False
+                            not_enough_equity = True
+                            break
                         else:
                             remaining_equity = allocate_equity_for_trade(total_budget_required)
                             default_log.debug(
@@ -6081,11 +6343,11 @@ def start_market_logging_for_buy(
                                     f"An error occurred while placing REVERSE TRADE 1 for symbol={symbol} "
                                     f"having timeframe={timeframe}")
 
-                                dto.reverse1_trade_quantity = 0
-                                dto.total_reverse_trade_quantity = 0
+                                # dto.reverse1_trade_quantity = 0
+                                # dto.total_reverse_trade_quantity = 0
 
                                 # Set tried_creating_reverse1_trade as false due to LESS EQUITY
-                                tried_creating_reverse1_trade = False
+                                # tried_creating_reverse1_trade = False
 
                             else:
                                 dto.reverse1_trade_order_id = reverse1_trade_order_id
@@ -6143,6 +6405,7 @@ def start_market_logging_for_buy(
                             symbol=symbol,
                             quantity=reverse_trade_quantity,
                             signal_type=SignalType.BUY,
+                            exchange="NSE",
                             entry_price=adjusted_sl
                         )
 
@@ -6151,11 +6414,11 @@ def start_market_logging_for_buy(
                                 f"An error occurred while placing REVERSE TRADE 1 for symbol={symbol} "
                                 f"having timeframe={timeframe}")
 
-                            dto.reverse1_trade_quantity = 0
-                            dto.total_reverse_trade_quantity = 0
+                            # dto.reverse1_trade_quantity = 0
+                            # dto.total_reverse_trade_quantity = 0
 
                             # Set tried_creating_reverse1_trade as false due to LESS EQUITY
-                            tried_creating_reverse1_trade = False
+                            # tried_creating_reverse1_trade = False
 
                         else:
                             dto.reverse1_trade_order_id = reverse1_trade_order_id
@@ -6196,12 +6459,18 @@ def start_market_logging_for_buy(
                                       f"({dto.reverse_trade_take_profit}) and reverse1_trade_order_id="
                                       f"{dto.reverse1_trade_order_id}")
                     current_candle_low = data.iloc[-1]['low']
+                    current_close_price = data.iloc[-1]['close']
                     # Initial Trade Signal Type was SELL
-                    if (current_candle_low < actual_sl) and (not tried_creating_reverse2_trade):
-                        default_log.debug(f"Placing REVERSE 2 TRADE as current candle high ({current_candle_low}) < "
+                    # if (current_candle_low < actual_sl) and (not tried_creating_reverse2_trade):
+
+                    # TODO: update this
+                    # actual_sl_with_buffer
+
+                    if (current_close_price < actual_sl) and (not tried_creating_reverse2_trade):
+                        default_log.debug(f"Placing REVERSE 2 TRADE as current candle close ({current_close_price}) < "
                                           f"actual sl ({actual_sl}) for symbol={symbol} having timeframe={timeframe}")
                         tried_creating_reverse2_trade = True
-                        dto.reverse2_entry_price = current_candle_low
+                        dto.reverse2_entry_price = actual_sl
 
                         if indices_symbol is not None:
                             # Calculate the quantity
@@ -6241,10 +6510,18 @@ def start_market_logging_for_buy(
                                     if (dto.reverse1_trade_quantity is None) or (dto.reverse1_trade_quantity == 0):
                                         dto.total_reverse_trade_quantity = 0
 
-                                    dto.reverse2_trade_quantity = 0
+                                    # dto.reverse2_trade_quantity = 0
+
+                                    if dto.reverse1_trade_order_id is None:
+                                        default_log.debug(f"[REVERSE TRADE 2] As Failed to place both REVERSE trades as "
+                                                          f"Reverse 1 trade id={dto.reverse1_trade_order_id} and "
+                                                          f"Reverse 2 trade order id={reverse2_trade_order_id} for "
+                                                          f"symbol={dto.symbol} having timeframe={dto.time_frame} so "
+                                                          f"stopping alert tracking")
+                                        break
 
                                     # Set tried_creating_reverse2_trade as false due to LESS EQUITY
-                                    tried_creating_reverse2_trade = False
+                                    # tried_creating_reverse2_trade = False
 
                                 else:
                                     dto.reverse2_trade_order_id = reverse2_trade_order_id
@@ -6311,6 +6588,7 @@ def start_market_logging_for_buy(
                                 symbol=symbol,
                                 quantity=reverse_trade_quantity,
                                 signal_type=SignalType.BUY,
+                                exchange="NSE",
                                 entry_price=current_candle_low
                             )
 
@@ -6322,10 +6600,18 @@ def start_market_logging_for_buy(
                                 if (dto.reverse1_trade_quantity is None) or (dto.reverse1_trade_quantity == 0):
                                     dto.total_reverse_trade_quantity = 0
 
-                                dto.reverse2_trade_quantity = 0
+                                # dto.reverse2_trade_quantity = 0
+
+                                if dto.reverse1_trade_order_id is None:
+                                    default_log.debug(f"[REVERSE TRADE 2] As Failed to place both REVERSE trades as "
+                                                      f"Reverse 1 trade id={dto.reverse1_trade_order_id} and "
+                                                      f"Reverse 2 trade order id={reverse2_trade_order_id} for "
+                                                      f"symbol={dto.symbol} having timeframe={dto.time_frame} so "
+                                                      f"stopping alert tracking")
+                                    break
 
                                 # Set tried_creating_reverse2_trade as false due to LESS EQUITY
-                                tried_creating_reverse2_trade = False
+                                # tried_creating_reverse2_trade = False
 
                             else:
                                 dto.reverse2_trade_order_id = reverse2_trade_order_id
@@ -6366,159 +6652,6 @@ def start_market_logging_for_buy(
                                     f"{dto.reverse_trade_take_profit} for symbol={dto.symbol} having "
                                     f"timeframe={dto.time_frame}")
 
-                # REVERSE BEYOND EXTENSION TRADE
-                elif ((dto.reverse1_trade_order_id is None) and tried_creating_reverse1_trade) and \
-                        ((dto.reverse2_trade_order_id is None) and tried_creating_reverse2_trade) and \
-                        (not tried_creating_reverse_cover_sl_trade):
-                    default_log.debug(
-                        f"[REVERSE BEYOND EXTENSION] Creating REVERSE BEYOND EXTENSION Trade as Reverse 1 Trade"
-                        f" Order ID is {dto.reverse1_trade_order_id} and tried_creating_reverse1_trade="
-                        f"{tried_creating_reverse1_trade} and Reverse 2 Trade Order ID is "
-                        f"{dto.reverse2_trade_order_id} and tried_creating_reverse2_trade="
-                        f"{tried_creating_reverse2_trade} for symbol")
-
-                    candle_low_price = data.iloc[-1]['low']
-                    tried_creating_reverse_cover_sl_trade = True
-
-                    # OPTION CHAIN REVERSE BEYOND EXTENSION TRADE
-                    if indices_symbol is not None:
-                        # Place only MARKET order
-
-                        # For the quantity: Round off the extension quantity to the lower closest multiplier of
-                        # indices_multiplier
-                        # Rounded Extension Quantity = (Extension Quantity / Indices Multiplier) * Indices Multiplier
-
-                        default_log.debug(f"[REVERSE BEYOND EXTENSION] Rounding down the extension quantity "
-                                          f"{dto.total_reverse_trade_quantity} to nearest multiplier of indices "
-                                          f"{indices_quantity_multiplier} using the formula: "
-                                          f"Rounded Extension Quantity = (Extension Quantity / Indices Multiplier) "
-                                          f"* Indices")
-                        dto.reverse_cover_sl_quantity = dto.total_reverse_trade_quantity
-                        rounded_down_extension_quantity = round_to_nearest_multiplier(
-                            dto.total_reverse_trade_quantity, indices_quantity_multiplier)
-
-                        # rounded_down_extension_quantity = int(math.floor(
-                        #     dto.extension_quantity / indices_quantity_multiplier) * indices_quantity_multiplier)
-                        default_log.debug(f"[REVERSE BEYOND EXTENSION] Rounded down extension quantity "
-                                          f"{dto.total_reverse_trade_quantity} to nearest multiplier of indices "
-                                          f"{indices_quantity_multiplier} using the formula: "
-                                          f"Rounded Extension Quantity = (Extension Quantity / Indices Multiplier) "
-                                          f"* Indices => {rounded_down_extension_quantity}")
-
-                        if (rounded_down_extension_quantity < indices_quantity_multiplier) or \
-                                (rounded_down_extension_quantity % indices_quantity_multiplier != 0):
-                            default_log.debug(f'[BEYOND EXTENSION] Not placing beyond extension trade as '
-                                              f'rounded_down_extension_quantity ({rounded_down_extension_quantity}) < '
-                                              f'indices_quantity_multiplier ({indices_quantity_multiplier}) for '
-                                              f'indices_symbol={indices_symbol} and symbol={symbol} having timeframe='
-                                              f'{timeframe}. OR rounded_down_extension_quantity '
-                                              f'({rounded_down_extension_quantity}) is not divisible by '
-                                              f'indices_quantity_multiplier ({indices_quantity_multiplier})')
-                            # Quantity fell short so returning
-                            short_quantity_issue = True
-                            break
-
-                        dto.extension_quantity = rounded_down_extension_quantity
-                        dto.cover_sl_quantity = rounded_down_extension_quantity
-
-                        extension_indices_market_order_id, fill_price = place_indices_market_order(
-                            indice_symbol=indices_symbol,
-                            quantity=rounded_down_extension_quantity,
-                            signal_type=SignalType.BUY,
-                            entry_price=candle_low_price
-                        )
-
-                        if extension_indices_market_order_id is None:
-                            default_log.debug(
-                                f"[BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
-                                f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
-
-                            # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                            tried_creating_cover_sl_trade = False
-
-                        else:
-                            default_log.debug(f"[REVERSE BEYOND EXTENSION] Successfully Placed REVERSE BEYOND Extension "
-                                              f"trade with id={extension_indices_market_order_id} for symbol={symbol} "
-                                              f"having time_frame={timeframe} with quantity="
-                                              f"{dto.total_reverse_trade_quantity}")
-
-                            dto.reverse_cover_sl_trade_order_id = extension_indices_market_order_id
-                            dto.reverse_cover_sl_trade_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
-
-                            zerodha_equity = get_zerodha_equity()
-
-                            total_budget_required = fill_price * dto.total_reverse_trade_quantity
-
-                            if (zerodha_equity - total_budget_required) < 0:
-                                default_log.debug(
-                                    f"Not Enough Equity remaining for placing remaining trades with "
-                                    f"required budget=Rs. {total_budget_required} for symbol={symbol} "
-                                    f"having timeframe={timeframe} and indices_symbol="
-                                    f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
-
-                                # Even if equity is less, then also retry when equity is enough
-                                tried_creating_reverse_cover_sl_trade = False
-                                # not_enough_equity = True
-                                # break
-                            else:
-                                remaining_equity = allocate_equity_for_trade(total_budget_required)
-                                default_log.debug(
-                                    f"Allocated Rs. {total_budget_required} for the remaining trades of symbol="
-                                    f"{symbol} having timeframe={timeframe} and indices_symbol={indices_symbol}. "
-                                    f"Remaining Equity: Rs. {remaining_equity}")
-
-                                total_budget_used = total_budget_required
-
-                    # STOCK MARKET COVER SL TRADE
-                    else:
-
-                        cover_sl_trade_order_id, fill_price = place_market_order(
-                            symbol=symbol,
-                            quantity=dto.total_reverse_trade_quantity,
-                            signal_type=SignalType.BUY,
-                            entry_price=candle_low_price
-                        )
-
-                        dto.reverse_cover_sl_quantity = dto.total_reverse_trade_quantity
-
-                        if cover_sl_trade_order_id is None:
-                            default_log.debug(
-                                f"[REVERSE BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
-                                f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
-                            # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                            tried_creating_reverse_cover_sl_trade = False
-                        else:
-                            default_log.debug(f"[REVERSE BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
-                                              f"id={cover_sl_trade_order_id} for symbol={symbol} having time_frame="
-                                              f"{timeframe} with quantity={dto.extension_quantity}")
-
-                            dto.reverse_cover_sl_trade_order_id = cover_sl_trade_order_id
-                            dto.reverse_cover_sl_trade_datetime = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
-
-                            zerodha_equity = get_zerodha_equity()
-
-                            total_budget_required = fill_price * dto.total_reverse_trade_quantity
-
-                            if (zerodha_equity - total_budget_required) < 0:
-                                default_log.debug(
-                                    f"Not Enough Equity remaining for placing remaining trades with "
-                                    f"required budget=Rs. {total_budget_required} for symbol={symbol} "
-                                    f"having timeframe={timeframe} and indices_symbol="
-                                    f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
-
-                                # Even if equity is less, then also retry when equity is enough
-                                tried_creating_reverse_cover_sl_trade = False
-                                # not_enough_equity = True
-                                # break
-                            else:
-                                remaining_equity = allocate_equity_for_trade(total_budget_required)
-                                default_log.debug(
-                                    f"Allocated Rs. {total_budget_required} for the remaining trades of symbol="
-                                    f"{symbol} having timeframe={timeframe} and indices_symbol={indices_symbol}. "
-                                    f"Remaining Equity: Rs. {remaining_equity}")
-
-                                total_budget_used = total_budget_required
-
             else:
                 default_log.debug(f"As SL was adjusted to {dto.cover_sl} for symbol={symbol} having "
                                   f"timeframe={timeframe} and the SL order has been triggered so not placing the "
@@ -6531,16 +6664,22 @@ def start_market_logging_for_buy(
 
             candle_high = data.iloc[-1]['high']
             candle_low = data.iloc[-1]['low']
+            current_close_price = data.iloc[-1]['close']
 
             # Check TP hit or not
             tp_value = dto.reverse_trade_take_profit
+
+            # todo: complete this
+            # tp_value_with_buffer
             # sl_value = dto.sl_value + dto.candle_length
             sl_value = dto.reverse_trade_stop_loss
             tp_quantity = sl_quantity = dto.total_reverse_trade_quantity
 
-            if candle_high >= tp_value:
+            # if candle_high >= tp_value:
+            if (current_close_price >= tp_value):
+
                 default_log.debug(
-                    f"[REVERSE TRADE] Current Candle High ({candle_high}) >= TP value ({tp_value}) for indices_symbol="
+                    f"[REVERSE TRADE] Current Candle Close ({current_close_price}) >= TP value ({tp_value}) for indices_symbol="
                     f"{indices_symbol} and time_frame={timeframe}. So placing MARKET order with "
                     f"quantity={tp_quantity} and signal_type={SignalType.SELL}")
 
@@ -6551,6 +6690,7 @@ def start_market_logging_for_buy(
                         symbol=symbol,
                         signal_type=SignalType.SELL,
                         quantity=tp_quantity,
+                        exchange="NSE",
                         entry_price=candle_high
                     )
 
@@ -6601,9 +6741,10 @@ def start_market_logging_for_buy(
                     break
 
             # Check SL-M hit or not
-            elif candle_low <= sl_value:
+            # elif candle_low <= sl_value:
+            elif (current_close_price <= sl_value):
                 default_log.debug(
-                    f"Current Candle Low ({candle_low}) <= SL value ({sl_value}) for indices_symbol="
+                    f"Current Candle Close ({current_close_price}) <= SL value ({sl_value}) for indices_symbol="
                     f"{indices_symbol} and time_frame={timeframe}. So placing MARKET order with "
                     f"quantity={sl_quantity} and signal_type={SignalType.SELL}")
 
@@ -6614,6 +6755,7 @@ def start_market_logging_for_buy(
                         symbol=symbol,
                         signal_type=SignalType.SELL,
                         quantity=tp_quantity,
+                        exchange="NSE",
                         entry_price=candle_low
                     )
 
@@ -6685,10 +6827,10 @@ def start_market_logging_for_buy(
             default_log.debug(f"An error occurred while storing thread event details in database")
             return False
 
-        if dto.tp_order_status == "COMPLETE":
-            default_log.debug(f"Take Profit Order with ID: {dto.tp_order_id} has been triggered and COMPLETED "
-                              f"for symbol={symbol} having timeframe={timeframe}")
-            break
+        # if dto.tp_order_status == "COMPLETE":
+        #     default_log.debug(f"Take Profit Order with ID: {dto.tp_order_id} has been triggered and COMPLETED "
+        #                       f"for symbol={symbol} having timeframe={timeframe}")
+        #     break
 
         if (dto.reverse_trade_sl_order_status == "COMPLETE") or (dto.reverse_trade_tp_order_status == "COMPLETE"):
             type_of_order_hit = 'TAKE PROFIT' if dto.reverse_trade_tp_order_status == "COMPLETE" else 'STOP LOSS'
@@ -6708,68 +6850,48 @@ def start_market_logging_for_buy(
         if data is None:
             default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
                               f"and timeframe={timeframe}")
+
+            # Flow to check if current time is greater than 15:30 IST then mark the alert as NEXT DAY for continuing
+            use_simulation = get_use_simulation_status()
+            if not use_simulation:
+                current_timestamp = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+                try:
+                    if current_timestamp > market_close_time:
+                        default_log.debug(
+                            f"As current timestamp ({current_timestamp}) > market close time ({market_close_time})"
+                            f" so stopping the alert tracking and marking the status of the alert as NEXT DAY "
+                            f"of symbol={symbol} having timeframe={timeframe}")
+
+                        # Mark the status as NEXT DAY for the alert and return
+                        # Store the current state of event in the database
+                        response = store_current_state_of_event(
+                            thread_detail_id=thread_detail_id,
+                            symbol=symbol,
+                            time_frame=timeframe,
+                            signal_type=SignalType.SELL,
+                            trade_alert_status="NEXT DAY",
+                            configuration=configuration,
+                            is_completed=True,
+                            dto=dto
+                        )
+
+                        if not response:
+                            default_log.debug(
+                                f"An error occurred while storing thread event details in database")
+                            return False
+
+                        return
+                    else:
+                        default_log.debug(
+                            f"Not marking the status of the alert as NEXT DAY as current timestamp "
+                            f"({current_timestamp}) < market close time ({market_close_time}) for symbol={symbol}"
+                            f" having timestamp={timestamp}")
+                except Exception as e:
+                    default_log.debug(
+                        f"An error occurred while checking if current timestamp ({current_timestamp}) > "
+                        f"market close time ({market_close_time}) for symbol={symbol} having "
+                        f"timeframe={timeframe}. Error: {e}")
             return None
-
-    try:
-        use_simulation = get_use_simulation_status()
-        if (dto is not None) and (not use_simulation):
-            current_time = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
-            if symbol in indices_list:
-                if (dto.event3_occur_time is None) and (current_time > close_indices_position_time):
-                    default_log.debug(f"As current_time ({current_time}) > close_indices_position_time "
-                                      f"({close_indices_position_time}) for symbol={symbol} having timeframe={timeframe} "
-                                      f"and event 3 not occurred as Event 3 occur time={dto.event3_occur_time}. So not "
-                                      f"closing the alert tracking but keeping it alive for NEXT DAY")
-                    trade_alert_status = "NEXT DAY"
-                    # Store the current state of event in the database
-                    response = store_current_state_of_event(
-                        thread_detail_id=thread_detail_id,
-                        symbol=symbol,
-                        time_frame=timeframe,
-                        signal_type=SignalType.BUY,
-                        trade_alert_status=trade_alert_status,
-                        configuration=configuration,
-                        is_completed=False,
-                        dto=dto
-                    )
-
-                    if not response:
-                        default_log.debug(f"An error occurred while storing thread event details in database")
-                        return
-                else:
-                    default_log.debug(f"As current_time ({current_time}) < close_indices_position_time "
-                                      f"({close_indices_position_time}) or Event 3 occur time={dto.event3_occur_time} "
-                                      f"for symbol={symbol} having timeframe={timeframe}. So closing the alert tracking.")
-            else:
-                if (dto.event3_occur_time is None) and (current_time > close_cash_trades_position_time):
-                    default_log.debug(f"As current_time ({current_time}) > close_cash_trades_position_time "
-                                      f"({close_cash_trades_position_time}) for symbol={symbol} having timeframe={timeframe} "
-                                      f"and event 3 not occurred as Event 3 occur time={dto.event3_occur_time}. So not "
-                                      f"closing the alert tracking but keeping it alive for NEXT DAY")
-                    trade_alert_status = "NEXT DAY"
-                    # Store the current state of event in the database
-                    response = store_current_state_of_event(
-                        thread_detail_id=thread_detail_id,
-                        symbol=symbol,
-                        time_frame=timeframe,
-                        signal_type=SignalType.BUY,
-                        trade_alert_status=trade_alert_status,
-                        configuration=configuration,
-                        is_completed=False,
-                        dto=dto
-                    )
-
-                    if not response:
-                        default_log.debug(f"An error occurred while storing thread event details in database")
-                        return
-                else:
-                    default_log.debug(f"As current_time ({current_time}) < close_indices_position_time "
-                                      f"({close_indices_position_time}) or Event 3 occur time={dto.event3_occur_time} "
-                                      f"for symbol={symbol} having timeframe={timeframe}. So closing the alert tracking.")
-
-    except Exception as e:
-        default_log.debug(f"An error occurred while checking if CURRENT MARKET CLOSED time as reached for symbol="
-                          f"{symbol} having timeframe={timeframe}. Error: {e}")
 
     trade_alert_status = "COMPLETE"
     if not_enough_equity:
@@ -6861,11 +6983,15 @@ def start_market_logging_for_sell(
     total_budget_used = 0
     initial_close_price = None
 
-    indices_quantity_multiplier = 50 if symbol == "NIFTY" else 45
+    reached_extension2_point = False
+    reached_extension1_point = False
+
+    indices_quantity_multiplier = 50 if symbol == "NIFTY" else 15
     initial_event1_done = False
     dto = None
 
     is_restart = False
+    is_continuity = False
 
     if restart_dto is not None:
         is_restart = True
@@ -7003,6 +7129,7 @@ def start_market_logging_for_sell(
             reverse1_trade_quantity=reverse1_trade_quantity,
             reverse2_trade_quantity=reverse2_trade_quantity,
             entry_trade_order_id=trade1_order_id,
+            entry_price=entry_price,
             extension1_trade_order_id=extension1_order_id,
             extension2_trade_order_id=extension2_order_id,
             cover_sl_trade_order_id=cover_sl_trade_order_id,
@@ -7095,6 +7222,7 @@ def start_market_logging_for_sell(
                 tried_creating_reverse_cover_sl_trade = True
 
     elif continuity_dto is not None:
+        is_continuity = True
         thread_detail_id = continuity_dto.thread_id
 
         # ALERT SYMBOL AND TIMEFRAME DETAIL
@@ -7271,11 +7399,17 @@ def start_market_logging_for_sell(
         try:
             if current_time < market_start_time:
                 wait_time_in_seconds = (market_start_time - current_time).seconds
+                wait_time_in_seconds += ((60 * int(timeframe)) + 5)  # Adding a 5-second buffer
                 default_log.debug(
                     f"As Current Time ({current_time}) < Market Start Time ({market_start_time}) so waiting "
                     f"{wait_time_in_seconds} seconds before continuing alert tracking for symbol={symbol} "
                     f"having timeframe={timeframe}")
                 tm.sleep(wait_time_in_seconds)
+            else:
+                default_log.debug(
+                    f"As Current Time ({current_time}) >= Market Start Time ({market_start_time}) so starting "
+                    f"subscribing for realtime ticks for alert tracking for symbol={symbol} "
+                    f"having timeframe={timeframe}")
         except Exception as e:
             default_log.debug(
                 f"An error occurred while checking if current time ({current_time}) was less than the "
@@ -7284,17 +7418,15 @@ def start_market_logging_for_sell(
             return
 
         data = get_zerodha_data(
-                instrument_token=instrument_token,
-                market_symbol=symbol,
-                interval=interval
-            )
+            instrument_token=instrument_token,
+            market_symbol=symbol,
+            interval=interval
+        )
 
         if data is None:
             default_log.debug(f"No data received from ZERODHA for symbol={symbol}"
                               f"and timeframe={timeframe}")
             return None
-
-        initial_event1_done = True
 
     else:
         # Non restart flow
@@ -7330,6 +7462,10 @@ def start_market_logging_for_sell(
         )
 
         response = add_thread_event_details(new_event_thread_dto)
+
+        if not (len(data) > 1):
+            # todo: remove this if using global data feed
+            initial_event1_done = True
 
         if type(response) == DBApiExceptionResponse:
             default_log.debug(f"An error occurred while storing thread event details in database: {response.error}")
@@ -7386,11 +7522,11 @@ def start_market_logging_for_sell(
         #             continue
 
         if initial_event1_done:
-            dto, data_dictionary = trade_logic_buy(symbol, timeframe, data.iloc[-1], data_dictionary)
+            dto, data_dictionary = trade_logic_buy(symbol, timeframe, data.iloc[-1], data_dictionary, is_continuity)
             dto.current_candle_low = data.iloc[-1]["low"]
             dto.current_candle_high = data.iloc[-1]["high"]
         else:
-            dto, data_dictionary = trade_logic_buy(symbol, timeframe, data.iloc[-2], data_dictionary)
+            dto, data_dictionary = trade_logic_buy(symbol, timeframe, data.iloc[-2], data_dictionary, is_continuity)
             dto.current_candle_low = data.iloc[-2]["low"]
             dto.current_candle_high = data.iloc[-2]["high"]
             initial_event1_done = True
@@ -7550,7 +7686,8 @@ def start_market_logging_for_sell(
             use_simulation = get_use_simulation_status()
             # if not use_simulation:
             if ((dto.entry_trade_order_id is not None) or (dto.extension1_trade_order_id is not None) or
-                (dto.extension2_trade_order_id is not None) or (dto.cover_sl_trade_order_id is not None)) and \
+                (dto.extension2_trade_order_id is not None) or (dto.cover_sl_trade_order_id is not None) or
+                (dto.reverse1_trade_order_id is not None) or (dto.reverse2_trade_order_id is not None)) and \
                     (not use_simulation):
 
                 current_time = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
@@ -7608,6 +7745,7 @@ def start_market_logging_for_sell(
                             symbol=symbol,
                             quantity=close_position_quantity,
                             signal_type=SignalType.SELL,
+                            exchange="BSE",
                             entry_price=data.iloc[-1]['high']
                         )
 
@@ -7628,69 +7766,6 @@ def start_market_logging_for_sell(
                                           f"{indices_symbol} having timeframe={timeframe} as current_time "
                                           f"({current_time}) >= close_indices_position_time "
                                           f"({close_indices_position_time})")
-
-            # If stop trade time i.e. 14:45 IST has been hit then only do calculations and don't take any trades
-            if ((dto.entry_trade_order_id is None) and (dto.extension1_trade_order_id is None) and
-                (dto.extension2_trade_order_id is None) and (dto.cover_sl_trade_order_id is None)) and \
-                    (not use_simulation):
-
-                current_time = datetime.now()
-                if current_time >= stop_trade_time:
-                    trade_alert_status = "NO TRADE TIME"
-                    default_log.debug(f"As current time ({current_time}) >= stop_trade_time {stop_trade_time} and Entry"
-                                      f" Trade Order ID={dto.entry_trade_order_id}, Extension 1 Trade Order ID="
-                                      f"{dto.extension1_trade_order_id}, Extension 2 Trade Order ID="
-                                      f"{dto.extension2_trade_order_id}, SL Trade Order ID="
-                                      f"{dto.cover_sl_trade_order_id} for symbol={symbol} having time_frame={timeframe}")
-
-                    # Store the current state of event in the database
-                    response = store_current_state_of_event(
-                        thread_detail_id=thread_detail_id,
-                        symbol=symbol,
-                        time_frame=timeframe,
-                        signal_type=SignalType.SELL,
-                        trade_alert_status=trade_alert_status,
-                        configuration=configuration,
-                        is_completed=False,
-                        dto=dto
-                    )
-
-                    if not response:
-                        default_log.debug(f"An error occurred while storing thread event details in database")
-                        return False
-
-                    data = get_next_data(
-                        is_restart=is_restart,
-                        timeframe=timeframe,
-                        instrument_token=instrument_token,
-                        interval=interval,
-                        from_timestamp=data.iloc[-1]["time"]
-                    )
-
-                    if data is None:
-                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
-                                          f"and timeframe={timeframe}")
-
-                        # Store the current state of event in the database
-                        response = store_current_state_of_event(
-                            thread_detail_id=thread_detail_id,
-                            symbol=symbol,
-                            time_frame=timeframe,
-                            signal_type=SignalType.BUY,
-                            trade_alert_status=trade_alert_status,
-                            configuration=configuration,
-                            is_completed=True,
-                            dto=dto
-                        )
-
-                        if not response:
-                            default_log.debug(f"An error occurred while storing thread event details in database")
-                            return False
-
-                        return
-
-                    # Continue calculating the take profit and stop loss but DON'T TAKE TRADE
-                    continue
 
             # find out how many trades needs to be made and the budget to be used
             # get the initial close price
@@ -7774,6 +7849,127 @@ def start_market_logging_for_sell(
                                           f"with transaction_type={SignalType.BUY}")
                         break
 
+            # If stop trade time i.e. 14:45 IST has been hit then only do calculations and don't take any trades
+            if ((dto.entry_trade_order_id is None) and (dto.extension1_trade_order_id is None) and
+                (dto.extension2_trade_order_id is None) and (dto.cover_sl_trade_order_id is None)) and \
+                    (not use_simulation):
+
+                current_time = datetime.now()
+                if current_time >= stop_trade_time:
+
+                    # CHECKING IF TP LEVEL REACHED
+                    tp_value = dto.tp_values[-1].tp_with_buffer
+                    candle_high = data.iloc[-1]['high']
+                    current_close_price = data.iloc[-1]['close']
+
+                    # if candle_high >= tp_value:
+                    if current_close_price >= tp_value:
+                        default_log.debug(
+                            f"Current Candle Close ({current_close_price}) >= TP value ({tp_value}) for indices_"
+                            f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
+                            f"Before placing any order as so EXITING the alert tracking")
+                        break
+
+                    trade_alert_status = "NO TRADE TIME"
+                    default_log.debug(
+                        f"As current time ({current_time}) >= stop_trade_time {stop_trade_time} and Entry"
+                        f" Trade Order ID={dto.entry_trade_order_id}, Extension 1 Trade Order ID="
+                        f"{dto.extension1_trade_order_id}, Extension 2 Trade Order ID="
+                        f"{dto.extension2_trade_order_id}, SL Trade Order ID="
+                        f"{dto.cover_sl_trade_order_id} for symbol={symbol} having time_frame={timeframe}")
+
+                    # Store the current state of event in the database
+                    response = store_current_state_of_event(
+                        thread_detail_id=thread_detail_id,
+                        symbol=symbol,
+                        time_frame=timeframe,
+                        signal_type=SignalType.SELL,
+                        trade_alert_status=trade_alert_status,
+                        configuration=configuration,
+                        is_completed=False,
+                        dto=dto
+                    )
+
+                    if not response:
+                        default_log.debug(
+                            f"An error occurred while storing thread event details in database")
+                        return False
+
+                    data = get_next_data(
+                        is_restart=is_restart,
+                        timeframe=timeframe,
+                        instrument_token=instrument_token,
+                        interval=interval,
+                        from_timestamp=data.iloc[-1]["time"]
+                    )
+
+                    if data is None:
+                        default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
+                                          f"and timeframe={timeframe}")
+
+                        # Store the current state of event in the database
+                        response = store_current_state_of_event(
+                            thread_detail_id=thread_detail_id,
+                            symbol=symbol,
+                            time_frame=timeframe,
+                            signal_type=SignalType.BUY,
+                            trade_alert_status=trade_alert_status,
+                            configuration=configuration,
+                            is_completed=True,
+                            dto=dto
+                        )
+
+                        if not response:
+                            default_log.debug(
+                                f"An error occurred while storing thread event details in database")
+                            return False
+
+                        return
+
+                    # Continue calculating the take profit and stop loss but DON'T TAKE TRADE
+                    continue
+
+            # Flow to check if current time is greater than 15:30 IST then mark the alert as NEXT DAY for continuing
+            use_simulation = get_use_simulation_status()
+            if not use_simulation:
+                current_timestamp = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+                try:
+                    if current_timestamp > market_close_time:
+                        default_log.debug(
+                            f"As current timestamp ({current_timestamp}) > market close time ({market_close_time})"
+                            f" so stopping the alert tracking and marking the status of the alert as NEXT DAY "
+                            f"of symbol={symbol} having timeframe={timeframe}")
+
+                        # Mark the status as NEXT DAY for the alert and return
+                        # Store the current state of event in the database
+                        response = store_current_state_of_event(
+                            thread_detail_id=thread_detail_id,
+                            symbol=symbol,
+                            time_frame=timeframe,
+                            signal_type=SignalType.SELL,
+                            trade_alert_status="NEXT DAY",
+                            configuration=configuration,
+                            is_completed=True,
+                            dto=dto
+                        )
+
+                        if not response:
+                            default_log.debug(
+                                f"An error occurred while storing thread event details in database")
+                            return False
+
+                        return
+                    else:
+                        default_log.debug(
+                            f"Not marking the status of the alert as NEXT DAY as current timestamp "
+                            f"({current_timestamp}) < market close time ({market_close_time}) for symbol={symbol}"
+                            f" having timestamp={timestamp}")
+                except Exception as e:
+                    default_log.debug(
+                        f"An error occurred while checking if current timestamp ({current_timestamp}) > "
+                        f"market close time ({market_close_time}) for symbol={symbol} having "
+                        f"timeframe={timeframe}. Error: {e}")
+
             # ======================================================================================= #
 
             # Placing the entry MARKET order trade
@@ -7853,11 +8049,12 @@ def start_market_logging_for_sell(
                                 f"with quantity={trade1_quantity}")
 
                             # As TRADE 1 failed so set the trade 1 quantity as zero
-                            dto.trade1_quantity = 0
+                            # todo: changed here
+                            # dto.trade1_quantity = 0
                             dto.extension_quantity = 0
 
                             # Set tried_creating_entry_order as false
-                            tried_creating_entry_order = False
+                            # tried_creating_entry_order = False
 
                         else:
                             dto.entry_trade_order_id = entry_trade_order_id
@@ -7913,6 +8110,7 @@ def start_market_logging_for_sell(
                         symbol=symbol,
                         signal_type=SignalType.BUY,
                         quantity=trade1_quantity,
+                        exchange="BSE",
                         entry_price=entry_price
                     )
 
@@ -7921,11 +8119,12 @@ def start_market_logging_for_sell(
                                           f"{symbol} and indices_symbol={indices_symbol} having timeframe={timeframe} "
                                           f"with quantity={trade1_quantity}")
                         # As TRADE 1 failed so set the trade 1 quantity as zero
-                        dto.trade1_quantity = 0
+                        # todo: changed here
+                        # dto.trade1_quantity = 0
                         dto.extension_quantity = 0
 
                         # Set tried_creating_entry_order as false
-                        tried_creating_entry_order = False
+                        # tried_creating_entry_order = False
 
                     else:
                         dto.entry_trade_order_id = entry_trade_order_id
@@ -7981,6 +8180,7 @@ def start_market_logging_for_sell(
 
                 candle_low = data.iloc[-1]['low']
                 candle_high = data.iloc[-1]['high']
+                current_close_price = data.iloc[-1]['close']
 
                 # CHECK IF TP OR SL HAS BEEN HIT
                 tp_value = dto.tp_values[-1].tp_with_buffer
@@ -7988,9 +8188,25 @@ def start_market_logging_for_sell(
 
                 quantity = dto.extension_quantity if dto.extension_quantity is not None else dto.trade1_quantity
 
-                if candle_high >= tp_value:
+                # if candle_high >= tp_value:
+                if (current_close_price >= tp_value) and (dto.tp_order_id is None) and \
+                    (dto.tp_order_status != 'COMPLETE') and (dto.sl_order_id is None):
+
+                    # TODO: Remove SL details from SL dictionary
+                    try:
+                        default_log.debug(f"As Take Profit level has been hit for symbol={symbol} having timeframe="
+                                          f"{timeframe} with signal_type=SELL. So removing the SL details of the alert")
+                        remove_sl_details_of_completed_trade(
+                            symbol=symbol,
+                            signal_type=SignalType.SELL,
+                            time_frame=int(timeframe)
+                        )
+                    except Exception as e:
+                        default_log.debug(f"An error occurred while removing SL details for the COMPLETED trade having "
+                                          f"symbol={symbol} and timeframe={timeframe}")
+
                     default_log.debug(
-                        f"Current Candle High ({candle_high}) >= TP value ({tp_value}) for indices_"
+                        f"Current Candle Close ({current_close_price}) >= TP value ({tp_value}) for indices_"
                         f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
                         f"So placing MARKET order with quantity={quantity} and "
                         f"signal_type={SignalType.SELL}")
@@ -8000,6 +8216,7 @@ def start_market_logging_for_sell(
                             symbol=symbol,
                             signal_type=SignalType.SELL,
                             quantity=quantity,
+                            exchange="BSE",
                             entry_price=tp_value
                         )
 
@@ -8054,9 +8271,25 @@ def start_market_logging_for_sell(
                     # break
 
                 # Check SL hit or not
-                elif candle_low <= sl_value:
+                # elif candle_low <= sl_value:
+                elif (current_close_price <= sl_value) and (dto.sl_order_id is None) and \
+                    (dto.sl_order_status != 'COMPLETE') and (dto.tp_order_id is None):
+
+                    # TODO: Remove SL details from SL dictionary
+                    try:
+                        default_log.debug(f"As Take Profit level has been hit for symbol={symbol} having timeframe="
+                                          f"{timeframe} with signal_type=SELL. So removing the SL details of the alert")
+                        remove_sl_details_of_completed_trade(
+                            symbol=symbol,
+                            signal_type=SignalType.SELL,
+                            time_frame=int(timeframe)
+                        )
+                    except Exception as e:
+                        default_log.debug(f"An error occurred while removing SL details for the COMPLETED trade having "
+                                          f"symbol={symbol} and timeframe={timeframe}")
+
                     default_log.debug(
-                        f"Current Candle Low ({candle_low}) <= SL value ({sl_value}) for indices_symbol="
+                        f"Current Candle Close ({current_close_price}) <= SL value ({sl_value}) for indices_symbol="
                         f"{indices_symbol} and symbol={symbol} and time_frame={timeframe}. So placing MARKET (SL-M) "
                         f"order with quantity={quantity} and signal_type={SignalType.SELL}")
 
@@ -8065,6 +8298,7 @@ def start_market_logging_for_sell(
                             symbol=symbol,
                             signal_type=SignalType.SELL,
                             quantity=quantity,
+                            exchange="BSE",
                             entry_price=sl_value
                         )
 
@@ -8126,10 +8360,12 @@ def start_market_logging_for_sell(
                 # CHECKING IF TP LEVEL REACHED
                 tp_value = dto.tp_values[-1].tp_with_buffer
                 candle_high = data.iloc[-1]['high']
+                current_close_price = data.iloc[-1]['close']
 
-                if candle_high >= tp_value:
+                # if candle_high >= tp_value:
+                if current_close_price >= tp_value:
                     default_log.debug(
-                        f"Current Candle High ({candle_high}) >= TP value ({tp_value}) for indices_"
+                        f"Current Candle Close ({current_close_price}) >= TP value ({tp_value}) for indices_"
                         f"symbol={indices_symbol} and symbol={symbol} and time_frame={timeframe}. "
                         f"Before placing any order as so EXITING the alert tracking")
                     dto.trade1_quantity = dto.actual_calculated_trade1_quantity if dto.actual_calculated_trade1_quantity is not None else 0
@@ -8137,6 +8373,9 @@ def start_market_logging_for_sell(
                     dto.extension2_quantity = dto.actual_calculated_extension2_quantity if dto.actual_calculated_extension2_quantity is not None else 0
                     short_quantity_issue = True
                     break
+
+                # TODO: Add SL Level Check also
+
             # ======================================================================================= #
 
             # if indices_symbol is not None:
@@ -8269,6 +8508,7 @@ def start_market_logging_for_sell(
             #             break
 
             # Only Store SL value when reverse trade have not been placed
+
             if (dto.reverse1_trade_order_id is None) and (dto.reverse2_trade_order_id is None):
                 default_log.debug(f"Storing SL value of symbol={symbol}, timeframe={timeframe}, "
                                   f"signal_type={SignalType.BUY} having stop_loss={dto.sl_value}")
@@ -8464,7 +8704,7 @@ def start_market_logging_for_sell(
 
             # Extra Trade placing logic
             # Place extra trade if candle high goes ABOVE by a threshold value
-            if (extension_diff is not None) and (trades_made < maximum_trades_to_make) and \
+            if (extension_diff is not None) and \
                     ((dto.tp_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])
                      and (dto.sl_order_status in ["MODIFIED", "OPEN", "TRIGGER PENDING"])) and \
                     (trades_details_dto.trades_to_make.extension1_trade or
@@ -8476,48 +8716,111 @@ def start_market_logging_for_sell(
 
                 extension_time_stamp = data.iloc[-1]["time"]
                 current_candle_low = data.iloc[-1]["low"]
+                current_close_price = data.iloc[-1]['close']
                 # threshold = extension_diff * (1 + (config_threshold_percent * trades_made))
 
                 # entry_price_difference = abs(dto.sl_value - current_candle_low)
                 entry_price_difference = abs(dto.sl_value - dto.entry_price)
 
-                if tried_creating_extension1_order and trades_details_dto.trades_to_make.extension1_trade:
-                    default_log.debug(f"Extension 1 trade has been made as Extension 1 Trade order id="
-                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
-                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
-                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 2 "
-                                      f"trade threshold percent={extension2_threshold_percent}")
-                    threshold_percent = extension2_threshold_percent
-                else:
-                    default_log.debug(f"Extension 1 trade has not been made as Extension 1 Trade order id="
-                                      f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
-                                      f"{tried_creating_extension1_order} and Make extension 1 trade status="
-                                      f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 1 "
-                                      f"trade threshold percent={extension1_threshold_percent}")
-                    threshold_percent = extension1_threshold_percent
+                # reached_extension2_point = False
+                # reached_extension1_point = False
+
+                # if tried_creating_extension1_order and trades_details_dto.trades_to_make.extension1_trade:
+                # if (dto.extension1_trade_order_id is not None) and trades_details_dto.trades_to_make.extension1_trade:
+                #     default_log.debug(f"Extension 1 trade has been made as Extension 1 Trade order id="
+                #                       f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                #                       f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                #                       f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 2 "
+                #                       f"trade threshold percent={extension2_threshold_percent}")
+                #     threshold_percent = extension2_threshold_percent
+                # else:
+                #     default_log.debug(f"Extension 1 trade has not been made as Extension 1 Trade order id="
+                #                       f"{dto.extension1_trade_order_id} and Tried creating extension 1 order="
+                #                       f"{tried_creating_extension1_order} and Make extension 1 trade status="
+                #                       f"{trades_details_dto.trades_to_make.extension1_trade}. So using Extension 1 "
+                #                       f"trade threshold percent={extension1_threshold_percent}")
+                #     threshold_percent = extension1_threshold_percent
+
+                extension1_point = dto.entry_price - (extension_diff * extension1_threshold_percent)
+                extension2_point = dto.entry_price - (extension_diff * extension2_threshold_percent)
+
+                if (current_close_price <= extension1_point) and not reached_extension1_point:
+                    default_log.debug(f"Reached Extension 1 Point as current_close_price ({current_close_price}) <= "
+                                      f"Extension 1 point ({extension1_point}) with entry_price={dto.entry_price}, "
+                                      f"extension_diff={extension_diff} for symbol={symbol} having "
+                                      f"timeframe={timeframe}")
+                    reached_extension1_point = True
+                    threshold_point = extension1_point
+                    threshold = (extension_diff * extension1_threshold_percent)
+                    entry_price_difference = abs(dto.sl_value - threshold_point)
+
+                    default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
+                                      f"at timestamp = {extension_time_stamp} and "
+                                      f"current_candle_low={current_candle_low} and threshold={threshold} and "
+                                      f"threshold_point={threshold_point} and Entry Price Difference="
+                                      f"{entry_price_difference}")
+
+                if (current_close_price <= extension2_point) and not reached_extension2_point:
+                    default_log.debug(f"Reached Extension 2 Point as current_close_price ({current_close_price}) <= "
+                                      f"Extension 2 point ({extension2_point}) with entry_price={dto.entry_price}, "
+                                      f"extension_diff={extension_diff} for symbol={symbol} having "
+                                      f"timeframe={timeframe}")
+                    reached_extension2_point = True
+                    threshold_point = extension2_point
+                    threshold = (extension_diff * extension2_threshold_percent)
+                    entry_price_difference = abs(dto.sl_value - threshold_point)
+
+                    default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
+                                      f"at timestamp = {extension_time_stamp} and "
+                                      f"current_candle_low={current_candle_low} and threshold={threshold} and "
+                                      f"threshold_point={threshold_point} and Entry Price Difference="
+                                      f"{entry_price_difference}")
 
                 # threshold = extension_diff * (config_threshold_percent * trades_made)
-                threshold = extension_diff * threshold_percent
-                threshold_point = dto.entry_price - threshold
-
-                default_log.debug(f"[EXTENSION] Entry Price = {dto.entry_price} and SL value = {dto.sl_value} "
-                                  f"at timestamp = {extension_time_stamp} and "
-                                  f"current_candle_low={current_candle_low} and threshold={threshold} and "
-                                  f"threshold_point={threshold_point} ")
+                # threshold = extension_diff * threshold_percent
+                # threshold_point = dto.entry_price - threshold
 
                 # if entry_price_difference >= threshold:
-                if current_candle_low <= threshold_point:
+                # if current_candle_low <= threshold_point:
+                # if current_close_price <= threshold_point:
+                if reached_extension1_point or reached_extension2_point:
                     default_log.debug(f"[EXTENSION] Creating EXTENSION trade as Entry Price = {dto.entry_price} "
                                       f"and SL value = {dto.sl_value} "
                                       f"and current_candle_low = {current_candle_low} "
                                       f"at timestamp = {extension_time_stamp} "
-                                      f"Current Candle Low {current_candle_low} <= "
-                                      f"Threshold Point {threshold_point}")
+                                      f"Reached Extension 1 Point={reached_extension1_point} and "
+                                      f"Reached Extension 2 Point={reached_extension2_point}")
+
+                    # Check if entry trade was placed or not
+                    # if (dto.entry_trade_order_id is None) and trades_details_dto.trades_to_make.entry_trade and \
+                    #         not tried_creating_entry_order and (reached_extension1_point or reached_extension2_point):
+                    #     # This condition will occur only when an attempt was made to place entry trade but failed
+                    #     # So don't place entry trade and mark tried_creating_entry_order as True
+                    #     default_log.debug(f"As Entry Trade order id={dto.entry_trade_order_id} and Make Entry Trade="
+                    #                       f"{trades_details_dto.trades_to_make.entry_trade} and tried_creating_entry_"
+                    #                       f"order={tried_creating_entry_order} and current_close_price="
+                    #                       f"{current_close_price} and reached_extension1_point="
+                    #                       f"{reached_extension1_point}, reached_extension2_point="
+                    #                       f"{reached_extension1_point} so will stop "
+                    #                       f"trying to place entry trade and place extension trade")
+                    #     tried_creating_entry_order = True
+
+                    # Check if extension 1 trade was placed or not
+                    # if (dto.extension1_trade_order_id is None) and trades_details_dto.trades_to_make.extension1_trade and \
+                    #         not tried_creating_extension1_order and reached_extension2_point:
+                    #     default_log.debug(
+                    #         f"As Extension 1 Trade order id={dto.extension1_trade_order_id} and Make Extension 1 Trade="
+                    #         f"{trades_details_dto.trades_to_make.extension1_trade} and tried_creating_extension1_order="
+                    #         f"{tried_creating_entry_order} and current_close_price="
+                    #         f"{current_close_price} and reached_extension2_point="
+                    #         f"{reached_extension2_point} so will stop "
+                    #         f"trying to place extension 1 trade and place extension 2 trade")
+                    #     tried_creating_extension1_order = True
 
                     # PLACING EXTENSION 2 ORDER
                     # If first extension trade is already done placing second extension trade
                     if tried_creating_extension1_order and (not tried_creating_extension2_order) and \
-                            (dto.extension2_trade_order_id is None):
+                            (dto.extension2_trade_order_id is None) and reached_extension2_point:
                         # If first two trades were placed then check if third trade needs to be placed or not
                         if trades_details_dto.trades_to_make.extension2_trade:
                             tried_creating_extension2_order = True
@@ -8655,10 +8958,11 @@ def start_market_logging_for_sell(
                                                 ((dto.extension1_quantity is None) and (dto.extension1_quantity == 0)):
                                             dto.extension_quantity = 0
 
-                                        dto.extension2_quantity = 0
+                                        # todo: changed here
+                                        # dto.extension2_quantity = 0
 
                                         # Set tried_creating_extension2_order as false
-                                        tried_creating_extension2_order = False
+                                        # tried_creating_extension2_order = False
 
                                     else:
                                         dto.extension2_trade_order_id = extension_order_id
@@ -8724,6 +9028,7 @@ def start_market_logging_for_sell(
                                     symbol=symbol,
                                     signal_type=SignalType.BUY,
                                     quantity=total_quantity,
+                                    exchange="BSE",
                                     entry_price=current_candle_low
                                 )
 
@@ -8736,10 +9041,11 @@ def start_market_logging_for_sell(
                                             ((dto.extension1_quantity is None) and (dto.extension1_quantity == 0)):
                                         dto.extension_quantity = 0
 
-                                    dto.extension2_quantity = 0
+                                    # todo: changed here
+                                    # dto.extension2_quantity = 0
 
                                     # Set tried_creating_extension2_order as false
-                                    tried_creating_extension2_order = False
+                                    # tried_creating_extension2_order = False
 
                                 else:
                                     dto.extension2_trade_order_id = extension_order_id
@@ -8830,9 +9136,10 @@ def start_market_logging_for_sell(
                                 f"[EXTENSION] Not placing Extension 2 trade has extension 2 trade "
                                 f"condition is {trades_details_dto.trades_to_make.extension2_trade}")
 
-                    # Making Extension 1 trade
+                    # PLACING EXTENSION 1 ORDER
                     elif tried_creating_entry_order and (not tried_creating_extension1_order) and \
-                            (dto.extension1_trade_order_id is None):
+                            (dto.extension1_trade_order_id is None) and reached_extension1_point:
+
                         # If first trade was placed then check if second trade needs to be placed or not
                         if trades_details_dto.trades_to_make.extension1_trade:
                             tried_creating_extension1_order = True
@@ -8920,10 +9227,11 @@ def start_market_logging_for_sell(
                                         if (dto.trade1_quantity is None) or (dto.trade1_quantity == 0):
                                             dto.extension_quantity = 0
 
-                                        dto.extension1_quantity = 0
+                                        # todo: changed here
+                                        # dto.extension1_quantity = 0
 
                                         # Set tried_creating_extension1_order as false
-                                        tried_creating_extension1_order = False
+                                        # tried_creating_extension1_order = False
 
                                     else:
                                         dto.extension1_trade_order_id = extension_order_id
@@ -8981,6 +9289,7 @@ def start_market_logging_for_sell(
                                     symbol=symbol,
                                     signal_type=SignalType.BUY,
                                     quantity=total_quantity,
+                                    exchange="BSE",
                                     entry_price=current_candle_low
                                 )
 
@@ -8993,10 +9302,11 @@ def start_market_logging_for_sell(
                                     if (dto.trade1_quantity is None) or (dto.trade1_quantity == 0):
                                         dto.extension_quantity = 0
 
-                                    dto.extension1_quantity = 0
+                                    # todo: changed here
+                                    # dto.extension1_quantity = 0
 
                                     # Set tried_creating_extension1_order as false
-                                    tried_creating_extension1_order = False
+                                    # tried_creating_extension1_order = False
 
                                 else:
                                     dto.extension1_trade_order_id = extension_order_id
@@ -9162,15 +9472,15 @@ def start_market_logging_for_sell(
                 else:
                     default_log.debug(
                         f"Extension Trade condition not met as values: extension_diff={extension_diff} "
-                        f"trades_made={trades_made}, threshold_percent={threshold_percent} "
-                        f"entry_price={entry_price} and sl_value={dto.sl_value} and threshold={threshold} "
-                        f"and current_candle_low: {current_candle_low} > threshold_point: {threshold_point} "
+                        f"trades_made={trades_made}, "
+                        f"entry_price={entry_price} and sl_value={dto.sl_value} and reached_extension1_point="
+                        f"{reached_extension1_point} and reached_extension2_point={reached_extension2_point} "
                         f"and symbol={symbol} and indices_symbol={indices_symbol} and "
                         f"Make Extension 1 trade={trades_details_dto.trades_to_make.extension1_trade} "
                         f"and Make Extension 2 trade={trades_details_dto.trades_to_make.extension2_trade} ")
 
             # Check if tried creating market order, extension1 order and extension2 order. If yes then create a
-            # MARKET order with only SL-M order and no LIMIT order
+            # MARKET order with only SL-M order and LIMIT order
             if (tried_creating_entry_order and tried_creating_extension1_order and tried_creating_extension2_order) \
                     and ((dto.entry_trade_order_id is None) and (dto.extension1_trade_order_id is None) and
                          (dto.extension2_trade_order_id is None)) and (not tried_creating_cover_sl_trade) and \
@@ -9187,6 +9497,7 @@ def start_market_logging_for_sell(
                     f"with stop_loss={dto.sl_value} and take_profit={dto.tp_values[-1].tp_value} "
                     f"with quantity={dto.extension_quantity}")
                 current_candle_low = data.iloc[-1]['low']
+                current_close_price = data.iloc[-1]['close']
 
                 # This case can occur when only SL Trade (COVER SL) need to be placed
                 if dto.extension_quantity is None:
@@ -9194,7 +9505,8 @@ def start_market_logging_for_sell(
                                       f"BEYOND EXTENSION Trade using Entry Price ({dto.entry_price}) and SL Value "
                                       f"({dto.sl_value}) with loss_percent of 100% for symbol={symbol} having timeframe"
                                       f"={timeframe}")
-                    beyond_extension_quantity = (1 * loss_budget) / abs(dto.entry_price - dto.sl_value)
+                    # beyond_extension_quantity = (1 * loss_budget) / abs(dto.entry_price - dto.sl_value)
+                    beyond_extension_quantity = (1 * loss_budget) / abs(current_close_price - dto.sl_value)
                     dto.extension_quantity = int(round(beyond_extension_quantity, 0))
                     default_log.debug(f"[BEYOND EXTENSION] Rounded off beyond_extension_quantity="
                                       f"{beyond_extension_quantity} to {dto.extension_quantity} for symbol={symbol} "
@@ -9254,8 +9566,9 @@ def start_market_logging_for_sell(
                             f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
 
                         # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                        tried_creating_cover_sl_trade = False
-
+                        # tried_creating_cover_sl_trade = False
+                        short_quantity_issue = True
+                        break
                     else:
                         default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
                                           f"id={extension_indices_market_order_id} for symbol={symbol} having "
@@ -9277,9 +9590,9 @@ def start_market_logging_for_sell(
                                 f"having timeframe={timeframe} and indices_symbol="
                                 f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
 
-                            tried_creating_cover_sl_trade = False
-                            # not_enough_equity = True
-                            # break
+                            # tried_creating_cover_sl_trade = False
+                            not_enough_equity = True
+                            break
                         else:
                             remaining_equity = allocate_equity_for_trade(total_budget_required)
                             default_log.debug(
@@ -9295,6 +9608,7 @@ def start_market_logging_for_sell(
                         symbol=symbol,
                         quantity=dto.extension_quantity,
                         signal_type=SignalType.BUY,
+                        exchange="BSE",
                         entry_price=current_candle_low
                     )
 
@@ -9305,7 +9619,9 @@ def start_market_logging_for_sell(
                                           f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
 
                         # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                        tried_creating_cover_sl_trade = False
+                        # tried_creating_cover_sl_trade = False
+                        short_quantity_issue = True
+                        break
                     else:
                         default_log.debug(f"[BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
                                           f"id={cover_sl_trade_order_id} for symbol={symbol} having time_frame="
@@ -9328,8 +9644,8 @@ def start_market_logging_for_sell(
                                 f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
 
                             # tried_creating_cover_sl_trade = False
-                            # not_enough_equity = True
-                            # break
+                            not_enough_equity = True
+                            break
                         else:
                             remaining_equity = allocate_equity_for_trade(total_budget_required)
                             default_log.debug(
@@ -9429,7 +9745,7 @@ def start_market_logging_for_sell(
                                 dto.total_reverse_trade_quantity = 0
 
                                 # Set tried_creating_reverse1_trade as false due to LESS EQUITY
-                                tried_creating_reverse1_trade = False
+                                # tried_creating_reverse1_trade = False
 
                             else:
                                 dto.reverse1_trade_order_id = reverse1_trade_order_id
@@ -9479,6 +9795,7 @@ def start_market_logging_for_sell(
                             symbol=symbol,
                             quantity=reverse_trade_quantity,
                             signal_type=SignalType.SELL,
+                            exchange="BSE",
                             entry_price=adjusted_sl
                         )
 
@@ -9487,11 +9804,11 @@ def start_market_logging_for_sell(
                                 f"An error occurred while placing REVERSE TRADE 1 for symbol={symbol} "
                                 f"having timeframe={timeframe}")
 
-                            dto.reverse1_trade_quantity = 0
+                            # dto.reverse1_trade_quantity = 0
                             dto.total_reverse_trade_quantity = 0
 
                             # Set tried_creating_reverse1_trade as false due to LESS EQUITY
-                            tried_creating_reverse1_trade = False
+                            # tried_creating_reverse1_trade = False
 
                         else:
                             dto.reverse1_trade_order_id = reverse1_trade_order_id
@@ -9537,12 +9854,18 @@ def start_market_logging_for_sell(
                                       f"({dto.reverse_trade_take_profit}) and reverse1_trade_order_id="
                                       f"{dto.reverse1_trade_order_id}")
                     current_candle_high = data.iloc[-1]['high']
+                    current_close_price = data.iloc[-1]['close']
                     # Initial Trade Signal Type was SELL
-                    if (current_candle_high > actual_sl) and (not tried_creating_reverse2_trade):
-                        default_log.debug(f"Placing REVERSE 2 TRADE as current candle high ({current_candle_high}) > "
+                    # if (current_candle_high > actual_sl) and (not tried_creating_reverse2_trade):
+
+                    # todo: update this
+                    # actual_sl_with_buffer
+
+                    if (current_close_price > actual_sl) and (not tried_creating_reverse2_trade):
+                        default_log.debug(f"Placing REVERSE 2 TRADE as current candle close ({current_close_price}) > "
                                           f"actual sl ({actual_sl}) for symbol={symbol} having timeframe={timeframe}")
                         tried_creating_reverse2_trade = True
-                        dto.reverse2_entry_price = current_candle_high
+                        dto.reverse2_entry_price = actual_sl
 
                         if indices_symbol is not None:
                             # Calculate the quantity
@@ -9586,10 +9909,19 @@ def start_market_logging_for_sell(
                                     if (dto.reverse1_trade_quantity is None) or (dto.reverse1_trade_quantity == 0):
                                         dto.total_reverse_trade_quantity = 0
 
-                                    dto.reverse2_trade_quantity = 0
+                                    if dto.reverse1_trade_order_id is None:
+                                        default_log.debug(
+                                            f"[REVERSE TRADE 2] As Failed to place both REVERSE trades as "
+                                            f"Reverse 1 trade id={dto.reverse1_trade_order_id} and "
+                                            f"Reverse 2 trade order id={reverse2_trade_order_id} for "
+                                            f"symbol={dto.symbol} having timeframe={dto.time_frame} so "
+                                            f"stopping alert tracking")
+                                        break
+
+                                    # dto.reverse2_trade_quantity = 0
 
                                     # Set tried_creating_reverse2_trade as false due to LESS EQUITY
-                                    tried_creating_reverse2_trade = False
+                                    # tried_creating_reverse2_trade = False
 
                                 else:
                                     dto.reverse2_trade_order_id = reverse2_trade_order_id
@@ -9652,6 +9984,7 @@ def start_market_logging_for_sell(
                                 symbol=symbol,
                                 quantity=reverse_trade_quantity,
                                 signal_type=SignalType.SELL,
+                                exchange="BSE",
                                 entry_price=actual_sl
                             )
 
@@ -9663,10 +9996,16 @@ def start_market_logging_for_sell(
                                 if (dto.reverse1_trade_quantity is None) or (dto.reverse1_trade_quantity == 0):
                                     dto.total_reverse_trade_quantity = 0
 
-                                dto.reverse2_trade_quantity = 0
-
+                                # dto.reverse2_trade_quantity = 0
+                                if dto.reverse1_trade_order_id is None:
+                                    default_log.debug(f"[REVERSE TRADE 2] As Failed to place both REVERSE trades as "
+                                                      f"Reverse 1 trade id={dto.reverse1_trade_order_id} and "
+                                                      f"Reverse 2 trade order id={reverse2_trade_order_id} for "
+                                                      f"symbol={dto.symbol} having timeframe={dto.time_frame} so "
+                                                      f"stopping alert tracking")
+                                    break
                                 # Set tried_creating_reverse2_trade as false due to LESS EQUITY
-                                tried_creating_reverse2_trade = False
+                                # tried_creating_reverse2_trade = False
 
                             else:
                                 dto.reverse2_trade_order_id = reverse2_trade_order_id
@@ -9706,165 +10045,6 @@ def start_market_logging_for_sell(
 
                                     total_budget_used = total_budget_required
 
-                # REVERSE BEYOND EXTENSION TRADE
-                elif ((dto.reverse1_trade_order_id is None) and tried_creating_reverse1_trade) and \
-                     ((dto.reverse2_trade_order_id is None) and tried_creating_reverse2_trade) and \
-                     (not tried_creating_reverse_cover_sl_trade):
-
-                    default_log.debug(
-                        f"[REVERSE BEYOND EXTENSION] Creating REVERSE BEYOND EXTENSION Trade as Reverse 1 Trade"
-                        f" Order ID is {dto.reverse1_trade_order_id} and tried_creating_reverse1_trade="
-                        f"{tried_creating_reverse1_trade} and Reverse 2 Trade Order ID is "
-                        f"{dto.reverse2_trade_order_id} and tried_creating_reverse2_trade="
-                        f"{tried_creating_reverse2_trade} for symbol")
-
-                    candle_high_price = data.iloc[-1]['high']
-                    tried_creating_reverse_cover_sl_trade = True
-
-                    # OPTION CHAIN REVERSE BEYOND EXTENSION TRADE
-                    if indices_symbol is not None:
-                        # Place only MARKET order
-
-                        # For the quantity: Round off the extension quantity to the lower closest multiplier of
-                        # indices_multiplier
-                        # Rounded Extension Quantity = (Extension Quantity / Indices Multiplier) * Indices Multiplier
-
-                        default_log.debug(
-                            f"[REVERSE BEYOND EXTENSION] Rounding down the extension quantity "
-                            f"{dto.total_reverse_trade_quantity} to nearest multiplier of indices "
-                            f"{indices_quantity_multiplier} using the formula: "
-                            f"Rounded Extension Quantity = (Extension Quantity / Indices Multiplier) "
-                            f"* Indices")
-                        dto.reverse_cover_sl_quantity = dto.total_reverse_trade_quantity
-                        rounded_down_extension_quantity = round_to_nearest_multiplier(
-                            dto.total_reverse_trade_quantity, indices_quantity_multiplier)
-
-                        # rounded_down_extension_quantity = int(math.floor(
-                        #     dto.extension_quantity / indices_quantity_multiplier) * indices_quantity_multiplier)
-                        default_log.debug(f"[REVERSE BEYOND EXTENSION] Rounded down extension quantity "
-                                          f"{dto.total_reverse_trade_quantity} to nearest multiplier of indices "
-                                          f"{indices_quantity_multiplier} using the formula: "
-                                          f"Rounded Extension Quantity = (Extension Quantity / Indices Multiplier) "
-                                          f"* Indices => {rounded_down_extension_quantity}")
-
-                        if (rounded_down_extension_quantity < indices_quantity_multiplier) or \
-                                (rounded_down_extension_quantity % indices_quantity_multiplier != 0):
-                            default_log.debug(f'[BEYOND EXTENSION] Not placing beyond extension trade as '
-                                              f'rounded_down_extension_quantity ({rounded_down_extension_quantity}) < '
-                                              f'indices_quantity_multiplier ({indices_quantity_multiplier}) for '
-                                              f'indices_symbol={indices_symbol} and symbol={symbol} having timeframe='
-                                              f'{timeframe}. OR rounded_down_extension_quantity '
-                                              f'({rounded_down_extension_quantity}) is not divisible by '
-                                              f'indices_quantity_multiplier ({indices_quantity_multiplier})')
-                            # Quantity fell short so returning
-                            short_quantity_issue = True
-                            break
-
-                        dto.extension_quantity = rounded_down_extension_quantity
-                        dto.cover_sl_quantity = rounded_down_extension_quantity
-
-                        extension_indices_market_order_id, fill_price = place_indices_market_order(
-                            indice_symbol=indices_symbol,
-                            quantity=rounded_down_extension_quantity,
-                            signal_type=SignalType.BUY,
-                            entry_price=candle_high_price
-                        )
-
-                        if extension_indices_market_order_id is None:
-                            default_log.debug(
-                                f"[BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
-                                f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
-
-                            # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                            tried_creating_cover_sl_trade = False
-
-                        else:
-                            default_log.debug(
-                                f"[REVERSE BEYOND EXTENSION] Successfully Placed REVERSE BEYOND Extension "
-                                f"trade with id={extension_indices_market_order_id} for symbol={symbol} "
-                                f"having time_frame={timeframe} with quantity="
-                                f"{dto.total_reverse_trade_quantity}")
-
-                            dto.reverse_cover_sl_trade_order_id = extension_indices_market_order_id
-                            dto.reverse_cover_sl_trade_datetime = datetime.now(
-                                tz=pytz.timezone("Asia/Kolkata"))
-
-                            zerodha_equity = get_zerodha_equity()
-
-                            total_budget_required = fill_price * dto.total_reverse_trade_quantity
-
-                            if (zerodha_equity - total_budget_required) < 0:
-                                default_log.debug(
-                                    f"Not Enough Equity remaining for placing remaining trades with "
-                                    f"required budget=Rs. {total_budget_required} for symbol={symbol} "
-                                    f"having timeframe={timeframe} and indices_symbol="
-                                    f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
-
-                                # Even if equity is less, then also retry when equity is enough
-                                tried_creating_reverse_cover_sl_trade = False
-                                # not_enough_equity = True
-                                # break
-                            else:
-                                remaining_equity = allocate_equity_for_trade(total_budget_required)
-                                default_log.debug(
-                                    f"Allocated Rs. {total_budget_required} for the remaining trades of symbol="
-                                    f"{symbol} having timeframe={timeframe} and indices_symbol={indices_symbol}. "
-                                    f"Remaining Equity: Rs. {remaining_equity}")
-
-                                total_budget_used = total_budget_required
-
-                    # STOCK MARKET COVER SL TRADE
-                    else:
-
-                        cover_sl_trade_order_id, fill_price = place_market_order(
-                            symbol=symbol,
-                            quantity=dto.total_reverse_trade_quantity,
-                            signal_type=SignalType.SELL,
-                            entry_price=candle_high_price
-                        )
-
-                        dto.reverse_cover_sl_quantity = dto.total_reverse_trade_quantity
-
-                        if cover_sl_trade_order_id is None:
-                            default_log.debug(
-                                f"[REVERSE BEYOND EXTENSION] An error occurred while placing BEYOND Extension Trade "
-                                f"for indices_symbol={indices_symbol} having time_frame={timeframe}")
-                            # Set tried_creating_cover_sl_trade as false due to LESS EQUITY
-                            tried_creating_reverse_cover_sl_trade = False
-                        else:
-                            default_log.debug(
-                                f"[REVERSE BEYOND EXTENSION] Successfully Placed BEYOND Extension trade with "
-                                f"id={cover_sl_trade_order_id} for symbol={symbol} having time_frame="
-                                f"{timeframe} with quantity={dto.extension_quantity}")
-
-                            dto.reverse_cover_sl_trade_order_id = cover_sl_trade_order_id
-                            dto.reverse_cover_sl_trade_datetime = datetime.now(
-                                tz=pytz.timezone("Asia/Kolkata"))
-
-                            zerodha_equity = get_zerodha_equity()
-
-                            total_budget_required = fill_price * dto.total_reverse_trade_quantity
-
-                            if (zerodha_equity - total_budget_required) < 0:
-                                default_log.debug(
-                                    f"Not Enough Equity remaining for placing remaining trades with "
-                                    f"required budget=Rs. {total_budget_required} for symbol={symbol} "
-                                    f"having timeframe={timeframe} and indices_symbol="
-                                    f"{indices_symbol} and remaining equity=Rs. {zerodha_equity}")
-
-                                # Even if equity is less, then also retry when equity is enough
-                                tried_creating_reverse_cover_sl_trade = False
-                                # not_enough_equity = True
-                                # break
-                            else:
-                                remaining_equity = allocate_equity_for_trade(total_budget_required)
-                                default_log.debug(
-                                    f"Allocated Rs. {total_budget_required} for the remaining trades of symbol="
-                                    f"{symbol} having timeframe={timeframe} and indices_symbol={indices_symbol}. "
-                                    f"Remaining Equity: Rs. {remaining_equity}")
-
-                                total_budget_used = total_budget_required
-
             else:
                 default_log.debug(f"As SL was adjusted to {dto.extended_sl} for symbol={symbol} having "
                                   f"timeframe={timeframe} and the SL order has been triggered so not placing the "
@@ -9877,16 +10057,26 @@ def start_market_logging_for_sell(
 
             candle_high = data.iloc[-1]['high']
             candle_low = data.iloc[-1]['low']
+            current_close_price = data.iloc[-1]['close']
 
             # Check TP hit or not
             tp_value = dto.reverse_trade_take_profit
+
+            # todo: update this
+            # tp_value_with_buffer
+
             # sl_value = dto.sl_value + dto.candle_length
             sl_value = dto.reverse_trade_stop_loss
+
+            # todo: update this
+            # sl_value_with_buffer
+
             tp_quantity = sl_quantity = dto.total_reverse_trade_quantity
 
-            if candle_low <= tp_value:
+            # if candle_low <= tp_value:
+            if current_close_price <= tp_value:
                 default_log.debug(
-                    f"[REVERSE TRADE] Current Candle Low ({candle_low}) <= TP value ({tp_value}) for indices_symbol="
+                    f"[REVERSE TRADE] Current Candle Close ({current_close_price}) <= TP value ({tp_value}) for indices_symbol="
                     f"{indices_symbol} and time_frame={timeframe}. So placing MARKET order with "
                     f"quantity={tp_quantity} and signal_type={SignalType.SELL}")
 
@@ -9897,6 +10087,7 @@ def start_market_logging_for_sell(
                         symbol=symbol,
                         signal_type=SignalType.BUY,
                         quantity=tp_quantity,
+                        exchange="BSE",
                         entry_price=tp_value
                     )
 
@@ -9949,9 +10140,10 @@ def start_market_logging_for_sell(
                     break
 
             # Check SL-M hit or not
-            elif candle_high >= sl_value:
+            # elif candle_high >= sl_value:
+            elif current_close_price >= sl_value:
                 default_log.debug(
-                    f"Current Candle High ({candle_high}) >= SL value ({sl_value}) for indices_symbol="
+                    f"Current Candle Close ({current_close_price}) >= SL value ({sl_value}) for indices_symbol="
                     f"{indices_symbol} and time_frame={timeframe}. So placing MARKET order with "
                     f"quantity={sl_quantity} and signal_type={SignalType.SELL}")
 
@@ -9962,6 +10154,7 @@ def start_market_logging_for_sell(
                         symbol=symbol,
                         signal_type=SignalType.BUY,
                         quantity=sl_quantity,
+                        exchange="BSE",
                         entry_price=sl_value
                     )
 
@@ -10044,13 +10237,6 @@ def start_market_logging_for_sell(
                               f"{timeframe}. Stopping Alert Tracking now.")
             break
 
-        # When server is stopped and all orders are CANCELLED
-        if (dto.sl_order_status == "CANCELLED") and (dto.tp_order_status == "CANCELLED"):
-            default_log.debug(
-                f"The TP and SL order has been CANCELLED for symbol={symbol} and time_frame={timeframe} "
-                f"TP order status={dto.tp_order_status} and SL order status={dto.sl_order_status}")
-            break
-
         # Fetch next data
         data = get_next_data(
             is_restart=is_restart,
@@ -10063,68 +10249,49 @@ def start_market_logging_for_sell(
         if data is None:
             default_log.debug(f"No data received from ZERODHA for symbol={symbol} "
                               f"and timeframe={timeframe}")
+
+            # Flow to check if current time is greater than 15:30 IST then mark the alert as NEXT DAY for continuing
+            use_simulation = get_use_simulation_status()
+            if not use_simulation:
+                current_timestamp = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+                try:
+                    if current_timestamp > market_close_time:
+                        default_log.debug(
+                            f"As current timestamp ({current_timestamp}) > market close time ({market_close_time})"
+                            f" so stopping the alert tracking and marking the status of the alert as NEXT DAY "
+                            f"of symbol={symbol} having timeframe={timeframe}")
+
+                        # Mark the status as NEXT DAY for the alert and return
+                        # Store the current state of event in the database
+                        response = store_current_state_of_event(
+                            thread_detail_id=thread_detail_id,
+                            symbol=symbol,
+                            time_frame=timeframe,
+                            signal_type=SignalType.SELL,
+                            trade_alert_status="NEXT DAY",
+                            configuration=configuration,
+                            is_completed=True,
+                            dto=dto
+                        )
+
+                        if not response:
+                            default_log.debug(
+                                f"An error occurred while storing thread event details in database")
+                            return False
+
+                        return
+                    else:
+                        default_log.debug(
+                            f"Not marking the status of the alert as NEXT DAY as current timestamp "
+                            f"({current_timestamp}) < market close time ({market_close_time}) for symbol={symbol}"
+                            f" having timestamp={timestamp}")
+                except Exception as e:
+                    default_log.debug(
+                        f"An error occurred while checking if current timestamp ({current_timestamp}) > "
+                        f"market close time ({market_close_time}) for symbol={symbol} having "
+                        f"timeframe={timeframe}. Error: {e}")
+
             break
-
-    try:
-        use_simulation = get_use_simulation_status()
-        if (dto is not None) and (not use_simulation):
-            current_time = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
-            if symbol in indices_list:
-                if (dto.event3_occur_time is None) and (current_time > close_indices_position_time):
-                    default_log.debug(f"As current_time ({current_time}) > close_indices_position_time "
-                                      f"({close_indices_position_time}) for symbol={symbol} having timeframe={timeframe} "
-                                      f"and event 3 not occurred as Event 3 occur time={dto.event3_occur_time}. So not "
-                                      f"closing the alert tracking but keeping it alive for NEXT DAY")
-                    trade_alert_status = "NEXT DAY"
-                    # Store the current state of event in the database
-                    response = store_current_state_of_event(
-                        thread_detail_id=thread_detail_id,
-                        symbol=symbol,
-                        time_frame=timeframe,
-                        signal_type=SignalType.SELL,
-                        trade_alert_status=trade_alert_status,
-                        configuration=configuration,
-                        is_completed=False,
-                        dto=dto
-                    )
-
-                    if not response:
-                        default_log.debug(f"An error occurred while storing thread event details in database")
-                        return
-                else:
-                    default_log.debug(f"As current_time ({current_time}) < close_indices_position_time "
-                                      f"({close_indices_position_time}) or Event 3 occur time={dto.event3_occur_time} "
-                                      f"for symbol={symbol} having timeframe={timeframe}. So closing the alert tracking.")
-            else:
-                if (dto.event3_occur_time is None) and (current_time > close_cash_trades_position_time):
-                    default_log.debug(f"As current_time ({current_time}) > close_cash_trades_position_time "
-                                      f"({close_cash_trades_position_time}) for symbol={symbol} having timeframe={timeframe} "
-                                      f"and event 3 not occurred as Event 3 occur time={dto.event3_occur_time}. So not "
-                                      f"closing the alert tracking but keeping it alive for NEXT DAY")
-                    trade_alert_status = "NEXT DAY"
-                    # Store the current state of event in the database
-                    response = store_current_state_of_event(
-                        thread_detail_id=thread_detail_id,
-                        symbol=symbol,
-                        time_frame=timeframe,
-                        signal_type=SignalType.SELL,
-                        trade_alert_status=trade_alert_status,
-                        configuration=configuration,
-                        is_completed=False,
-                        dto=dto
-                    )
-
-                    if not response:
-                        default_log.debug(f"An error occurred while storing thread event details in database")
-                        return
-                else:
-                    default_log.debug(f"As current_time ({current_time}) < close_indices_position_time "
-                                      f"({close_indices_position_time}) or Event 3 occur time={dto.event3_occur_time} "
-                                      f"for symbol={symbol} having timeframe={timeframe}. So closing the alert tracking.")
-
-    except Exception as e:
-        default_log.debug(f"An error occurred while checking if CURRENT MARKET CLOSED time as reached for symbol="
-                          f"{symbol} having timeframe={timeframe}. Error: {e}")
 
     trade_alert_status = "COMPLETE"
     if not_enough_equity:
@@ -10167,7 +10334,7 @@ def start_market_logging_for_sell(
 
 
 def continue_alerts():
-    default_log.debug(f"inside restart_event_threads")
+    default_log.debug(f"inside continue_alerts")
 
     # Get all incomplete thread details
     thread_details = get_all_continuity_thread_details()
@@ -10260,9 +10427,9 @@ def continue_alerts():
             cover_sl_quantity=cover_sl_quantity,
             reverse1_trade_quantity=reverse1_trade_quantity,
             reverse2_trade_quantity=reverse2_trade_quantity,
-            entry_trade_order_id=trade1_order_id,
-            extension1_trade_order_id=extension1_order_id,
-            extension2_trade_order_id=extension2_order_id,
+            signal_trade_order_id=trade1_order_id,
+            extension1_order_id=extension1_order_id,
+            extension2_order_id=extension2_order_id,
             cover_sl_trade_order_id=cover_sl_trade_order_id,
             tp_order_id=tp_order_id,
             sl_order_id=sl_order_id,
@@ -10401,9 +10568,9 @@ def restart_event_threads():
             cover_sl_quantity=cover_sl_quantity,
             reverse1_trade_quantity=reverse1_trade_quantity,
             reverse2_trade_quantity=reverse2_trade_quantity,
-            entry_trade_order_id=trade1_order_id,
-            extension1_trade_order_id=extension1_order_id,
-            extension2_trade_order_id=extension2_order_id,
+            signal_trade_order_id=trade1_order_id,
+            extension1_order_id=extension1_order_id,
+            extension2_order_id=extension2_order_id,
             cover_sl_trade_order_id=cover_sl_trade_order_id,
             tp_order_id=tp_order_id,
             sl_order_id=sl_order_id,

@@ -6,6 +6,7 @@ from logic.live_trades_logic.dtos.trade_details_dto import TradeDetailDTO
 
 
 class AlertTradeDetailsDTO(BaseModel):
+    symbol: Optional[str]
     alert_time: Optional[datetime]
     entry_trade_details: Optional[TradeDetailDTO]
     extension1_trade_details: Optional[TradeDetailDTO]

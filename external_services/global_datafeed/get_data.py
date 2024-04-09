@@ -8,7 +8,7 @@ import pytz
 import pandas as pd
 
 from api.event_management.dtos.check_events_dto import CheckEventsDTO
-from config import default_log, indices_list, endpoint, accesskey, sandbox_mode
+from config import default_log, indices_list, endpoint, accesskey, sandbox_mode, banknifty_symbol
 
 import websocket
 
@@ -26,6 +26,7 @@ symbol_ticks = dict()
 symbols_interval_data = dict()
 
 symbols = []
+all_ticks_queue = []
 
 dataframe = pd.DataFrame()
 
@@ -40,10 +41,22 @@ trade_alerts_df = pd.DataFrame()
 started_backtesting = sandbox_mode
 backtest_feed_ticks_threads = dict()
 active_ticks_thread: list[threading.Thread] = []
+callback_started = False
 
 backtesting_status = 'INACTIVE'
 
 global_data_feed_connection_status = 'NOT CONNECTED'
+
+
+def add_realtime_ticks(tick_data):
+    global all_ticks_queue
+    global callback_started
+    default_log.debug(f"inside add_realtime_ticks with tick_data={tick_data}")
+
+    all_ticks_queue.append(tick_data)
+    if not callback_started:
+        callback_started = True
+        threading.Thread(target=tick_callback).start()
 
 
 def get_backtesting_status():
@@ -101,14 +114,16 @@ def download_tick_data_for_symbols(backtest_date: datetime.date, symbols_list: l
     default_log.debug(f"inside download_tick_data_for_symbols with date="
                       f"{backtest_date} and symbols_list={symbols_list}")
     # Convert date to ist datetime with starting time as 09:30:00+05:30
-    desired_start_time = datetime.time(9, 30)
-    from_time_in_ist = datetime.datetime.combine(backtest_date, desired_start_time,
-                                                 tzinfo=pytz.timezone("Asia/Kolkata"))
+    from_time_in_ist = pytz.timezone("Asia/Kolkata").localize(datetime.datetime.combine(backtest_date, datetime.time(9, 15)))
+    # desired_start_time = datetime.time(9, 15)
+    # from_time_in_ist = datetime.datetime.combine(backtest_date, desired_start_time,
+    #                                              tzinfo=pytz.timezone("Asia/Kolkata"))
 
     from_time_in_epochs = str(int(from_time_in_ist.timestamp()))
 
-    desired_end_time = datetime.time(15, 30)
-    to_time_in_ist = datetime.datetime.combine(backtest_date, desired_end_time, tzinfo=pytz.timezone("Asia/Kolkata"))
+    # desired_end_time = datetime.time(15, 30)
+    to_time_in_ist = pytz.timezone("Asia/Kolkata").localize(datetime.datetime.combine(backtest_date, datetime.time(15, 30)))
+    # to_time_in_ist = datetime.datetime.combine(backtest_date, desired_end_time, tzinfo=pytz.timezone("Asia/Kolkata"))
 
     to_time_in_epochs = str(int(to_time_in_ist.timestamp()))
     default_log.debug(f"From time in epochs={from_time_in_epochs} for From time in IST={from_time_in_ist} and To "
@@ -186,7 +201,7 @@ def start_replaying_tick_data_of_symbols(symbols_list: list[str]):
         # Assuming feed_ticks_of_symbol takes the symbol_index as an argument
         thread = threading.Thread(target=feed_ticks_of_symbol, args=(symbol_index,))
         thread.start()
-        active_ticks_thread.append(thread)
+        # active_ticks_thread.append(thread)
         default_log.debug(f"Started Replaying ticks of symbol={symbol}")
 
     default_log.debug(f"Started Replaying ticks of symbols_list={symbols_list}")
@@ -255,7 +270,7 @@ def feed_ticks_of_symbol(symbol: str):
     for idx, row in symbol_ticks_df.iterrows():
         tick_data = row.to_dict()
 
-        tick_callback(tick_data)
+        add_realtime_ticks(tick_data)
 
     time.sleep(2)  # sleep for 2 seconds before deleting all ticks as previous tick_callback would be processing the
     # ticks
@@ -322,19 +337,25 @@ def stop_providing_ticks_of_all_symbols():
 
             # Stop the subscription for live ticks
             default_log.debug(f"Stopping Subscribing of live ticks for symbol={symbol}")
-            instrument_identifier = symbol + '-I'
+            if symbol == "BANKNIFTY":
+                instrument_identifier = banknifty_symbol
+            else:
+                instrument_identifier = symbol + '-I'
             SubscribeRealtime(
                 ws=global_feedata_websocket,
                 instrument_identifier=instrument_identifier,
                 stop_subscribing=True
             )
     except Exception as e:
-        default_log.debug(f"An error occurred while clearing the data of symbol={symbol}. Error: {e}")
+        default_log.debug(f"An error occurred while clearing the data of all symbols. Error: {e}")
 
 
 def save_tick_data_to_csv(tick_data, symbol: str):
     try:
-        symbol = symbol + '-I'  # uncomment later
+        if "BANKNIFTY" in symbol:
+            symbol = "BANKNIFTY-I"
+        else:
+            symbol = symbol + '-I'  # uncomment later
         default_log.debug(f"Inside save_tick_data_to_csv with symbol={symbol} and tick_data={tick_data}")
 
         if len(tick_data) == 0:
@@ -394,7 +415,10 @@ def process_symbol_ticks(symbol, time_frame):
     for company_data in symbol_tick:
         symbol = company_data["InstrumentIdentifier"]
 
-        symbol = symbol.split('-')[0]
+        if "BANKNIFTY" in symbol:
+            symbol = "BANKNIFTY"
+        else:
+            symbol = symbol.split('-')[0]
 
         ltp = company_data["LastTradePrice"]
         epoch_timestamp = company_data.timestamp if type(company_data) != dict else company_data["LastTradeTime"]
@@ -425,6 +449,7 @@ def process_symbol_ticks(symbol, time_frame):
     if len(candles_interval_data) < 2:
         # The previous candle data has not been prepared yet
         symbols_interval_data[symbol][time_frame] = []
+
         return
 
     last_row = candles_interval_data.reset_index().iloc[-1]
@@ -453,20 +478,8 @@ def process_symbol_ticks(symbol, time_frame):
     symbols_interval_data[symbol][time_frame] = json_data_for_symbol_interval
 
 
-def tick_callback(tick_data):
-    # This is the callback function that will be called when tick data is received
-    # You can process the tick data here or perform any other actions
-    global symbol_ticks
-    global symbols_interval_data
-    global trade_alerts_df
-    global started_backtesting
-
-    default_log.debug(f"Tick data received: {tick_data}")
-
-    symbol = tick_data["InstrumentIdentifier"]
-    symbol = symbol.split("-")[0]  # if symbol is AXISBANK-I then store only AXISBANK
-    # symbol = "NIFTY" if symbol == "NIFTY-I" else symbol
-    # symbol = "BANKNIFTY" if symbol == "BANKNIFTY-I" else symbol
+def store_symbol_ticks(tick_data, symbol):
+    default_log.debug(f"inside store_symbol_ticks with tick_data={tick_data} and symbol={symbol}")
 
     symbol_tick = symbol_ticks.get(symbol, [])
 
@@ -474,27 +487,66 @@ def tick_callback(tick_data):
     symbol_tick.append(tick_data)
     symbol_ticks[symbol] = symbol_tick
 
-    # Get the intervals of symbol
-    symbol_intervals = symbols_interval_data.get(symbol, {})
 
-    time_frames = symbol_intervals.keys()
-    default_log.debug(f"Timeframes for symbol={symbol} having timeframe keys={time_frames}")
-    for time_frame in time_frames:
-        threading.Thread(target=process_symbol_ticks, args=(symbol, time_frame)).start()
+# def tick_callback(tick_data):
+def tick_callback():
+    # This is the callback function that will be called when tick data is received
+    # You can process the tick data here or perform any other actions
+    global symbol_ticks
+    global symbols_interval_data
+    global trade_alerts_df
+    global started_backtesting
+    global all_ticks_queue
 
-    if started_backtesting and not trade_alerts_df.empty:
-        # get the time of the tick data
-        epoch_timestamp = tick_data["LastTradeTime"]
-        # convert to ist_timestamp
-        utc_timestamp = datetime.datetime.utcfromtimestamp(epoch_timestamp).replace(
-            tzinfo=datetime.timezone.utc)
+    default_log.debug(f"inside tick_callback")
 
-        # Convert UTC to IST
-        ist = pytz.timezone('Asia/Kolkata')
-        timestamp_ist = utc_timestamp.astimezone(ist)
-        default_log.debug(f"[inside tick_callback] "
-                          f"Checking for trade initialize event for symbol={symbol} and timestamp_ist={timestamp_ist}")
-        check_timestamp_and_start_event_checking(timestamp_ist, symbol)
+    while True:
+        if len(all_ticks_queue) < 1:
+            default_log.debug(f"As the all_ticks_queue is empty so waiting 1 second")
+            time.sleep(1)  # Sleep for 1 second
+            continue
+        else:
+            # default_log.debug(f"[BEFORE POPPING] All ticks queue: {all_ticks_queue}")
+            # Remove the first tick and process it
+            tick_data = all_ticks_queue.pop(0)
+
+            # TODO: updated here
+            if "BANKNIFTY" in str(tick_data["InstrumentIdentifier"]):
+                symbol = "BANKNIFTY"
+            else:
+                symbol = tick_data["InstrumentIdentifier"]
+                symbol = symbol.split("-")[0]  # if symbol is AXISBANK-I then store only AXISBANK
+            # symbol = "NIFTY" if symbol == "NIFTY-I" else symbol
+            # symbol = "BANKNIFTY" if symbol == "BANKNIFTY-I" else symbol
+
+            symbol_tick = symbol_ticks.get(symbol, [])
+
+            # default_log.debug(f"Symbol = {symbol} | symbol_tick = {symbol_tick}")
+            symbol_tick.append(tick_data)
+            symbol_ticks[symbol] = symbol_tick
+
+            # Get the intervals of symbol
+            symbol_intervals = symbols_interval_data.get(symbol, {})
+
+            time_frames = symbol_intervals.keys()
+            default_log.debug(f"Timeframes for symbol={symbol} having timeframe keys={time_frames}")
+            for time_frame in time_frames:
+                threading.Thread(target=process_symbol_ticks, args=(symbol, time_frame)).start()
+
+            if started_backtesting and not trade_alerts_df.empty:
+                # get the time of the tick data
+                epoch_timestamp = tick_data["LastTradeTime"]
+                # convert to ist_timestamp
+                utc_timestamp = datetime.datetime.utcfromtimestamp(epoch_timestamp).replace(
+                    tzinfo=datetime.timezone.utc)
+
+                # Convert UTC to IST
+                ist = pytz.timezone('Asia/Kolkata')
+                timestamp_ist = utc_timestamp.astimezone(ist)
+                default_log.debug(f"[inside tick_callback] "
+                                  f"Checking for trade initialize event for symbol={symbol} and timestamp_ist={timestamp_ist}")
+                check_timestamp_and_start_event_checking(timestamp_ist, symbol)
+            # default_log.debug(f"[AFTER POPPING] All ticks queue: {all_ticks_queue}")
 
 
 def add_previous_tick_data(symbol: str, previous_tick_data):
@@ -502,6 +554,8 @@ def add_previous_tick_data(symbol: str, previous_tick_data):
     default_log.debug(f"inside add_previous_tick_data with symbol={symbol} and tick data={previous_tick_data}")
 
     default_log.debug(f"Adding initial ticks for symbol={symbol}: {previous_tick_data}")
+    if "BANKNIFTY" in symbol:
+        symbol = "BANKNIFTY"
     custom_tick_data = []
     for tick in previous_tick_data:
         prev_data = {
@@ -527,6 +581,8 @@ def add_historical_data(symbol: str, time_frame: str, hist_data):
                       f"and time_frame={time_frame}")
 
     default_log.debug(f"Adding historical_data for symbol={symbol}: {hist_data}")
+    if "BANKNIFTY" in symbol:
+        symbol = "BANKNIFTY"
     custom_historical_data = []
     for hist in hist_data:
         # Convert epochs to datetime object
@@ -576,7 +632,9 @@ def SubscribeRealtime(ws, instrument_identifier: str, stop_subscribing: bool = F
     InstIdentifier = instrument_identifier + "-I"  # if symbol is AXISBANK then InstIdentifier would be AXISBANK-I
 
     # InstIdentifier = "NIFTY-I" if instrument_identifier == "NIFTY" else instrument_identifier
-    # InstIdentifier = "BANKNIFTY-I" if instrument_identifier == "BANKNIFTY" else InstIdentifier
+
+    # todo: update here
+    InstIdentifier = banknifty_symbol if instrument_identifier == "BANKNIFTY" else InstIdentifier
 
     Unsubscribe = "true" if stop_subscribing else "false"  # GFDL : To stop data subscription for this symbol,
     # send this value as "true"
@@ -613,7 +671,11 @@ def GetHistory(
     InstIdentifier = instrument_identifier + "-I"  # if symbol is AXISBANK then InstIdentifier would be AXISBANK-I
 
     # InstIdentifier = "NIFTY-I" if instrument_identifier == "NIFTY" else instrument_identifier
-    # InstIdentifier = "BANKNIFTY-I" if instrument_identifier == "BANKNIFTY" else InstIdentifier
+
+    # todo: update here
+    InstIdentifier = banknifty_symbol if instrument_identifier == "BANKNIFTY" else InstIdentifier
+
+    isShortIdentifier = "false" if instrument_identifier != "BANKNIFTY" else "true"
 
     Periodicity = periodicity
     Period = time_frame if time_frame is not None else "0"
@@ -626,7 +688,6 @@ def GetHistory(
     to_time_string = f'"To":{to_time_in_epochs}'
 
     # isShortIdentifier = "false" if instrument_identifier in indices_list else "true"
-    isShortIdentifier = "false"
     # strMessage = '{"MessageType":"GetHistory","Period":"' + Period + '","UserTag":"' + user_tag + '","From":"' + from_time_in_epochs + '","To": "' + to_time_in_epochs + '","Exchange":"' + ExchangeName + '","InstrumentIdentifier":"' + InstIdentifier + '","Periodicity":"' + Periodicity + '","isShortIdentifier":"' + isShortIdentifier + '"}'
     # strMessage = '{"MessageType":"GetHistory","From":"' + from_time_in_epochs + '","Exchange":"' + ExchangeName + '","InstrumentIdentifier":"' + InstIdentifier + '","Periodicity":"' + Periodicity + '","isShortIdentifier":"' + isShortIdentifier + '"}'
 
@@ -674,6 +735,8 @@ def on_message(ws, message):
         default_log.debug('AUTHENTICATED!!!')
         global_data_feed_connection_status = 'CONNECTED'
     else:
+        start_time = time.time()
+        default_log.debug(f"Data Received with start_time={start_time}")  # Log Time
         data = json.loads(message)
 
         try:
@@ -723,7 +786,13 @@ def on_message(ws, message):
 
             elif "LastTradeTime" in data.keys():
                 default_log.debug(f"Data: {data}")
-                tick_callback(data)
+                # threading.Thread(target=tick_callback, args=(data,)).start()
+                add_realtime_ticks(tick_data=data)
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+
+                default_log.debug(
+                    f"Total time required for complete processing of ticks is {elapsed_time} seconds")
         except Exception as e:
             default_log.debug(f"An error occurred while processing websocket response. Error: {e}")
 
@@ -765,6 +834,22 @@ def initialize_websocket_server():
     ws.run_forever()
 
 
+def restart_subscribing_for_realtime_ticks():
+    global global_feedata_websocket
+    global symbols
+
+    default_log.debug(f"inside restart_subscribing_for_realtime_ticks with symbols={symbols}")
+    for sym in symbols:
+        default_log.debug(f"Starting subscribing for realtime ticks for symbol={sym}")
+        SubscribeRealtime(
+            ws=global_feedata_websocket,
+            instrument_identifier=sym
+        )
+        default_log.debug(f"Request sent to subscribe to realtime ticks for symbol={sym}")
+
+    return
+
+
 def start_global_data_feed_server():
     # Start the initial subscription
     global symbols
@@ -774,6 +859,8 @@ def start_global_data_feed_server():
     websocket_thread.start()
 
     time.sleep(5)  # sleep for 5 seconds till global data server is started and authenticated
+    # Restart subscribing for realtime data
+    threading.Thread(target=restart_subscribing_for_realtime_ticks).start()
 
 
 def get_nfo_closest_expiry_date(index_symbol: str):
@@ -832,6 +919,7 @@ def get_global_data_feed_historical_data(
 
     # Get Tick Data
     if (trading_symbol not in symbols) and not started_backtesting:
+        default_log.debug(f"Trading Symbol ({trading_symbol}) is not in symbols={symbols}")
         symbols.append(trading_symbol)
         SubscribeRealtime(ws=global_feedata_websocket, instrument_identifier=trading_symbol)
         default_log.debug(f"Started subscribing to Global Feed about symbol={trading_symbol}")

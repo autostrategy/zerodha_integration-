@@ -49,7 +49,7 @@ def get_all_continuity_thread_details(session=None, close_session=True):
     thread_details = db.query(
         ThreadDetails
     ).filter(
-        ThreadDetails.trade_alert_status == "NEXT DAY"
+        ThreadDetails.trade_alert_status.in_(["NEXT DAY", "NO TRADE TIME"])
     ).order_by(
         ThreadDetails.id.asc()
     ).all()

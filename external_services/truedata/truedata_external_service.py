@@ -13,12 +13,12 @@ from config import default_log, sandbox_mode, realtime_port, truedata_username, 
 symbol_ticks = dict()
 symbols_interval_data = dict()
 
-symbols = []
+symbols = ['WIPRO']
 
 counter = 0
 dataframe = pd.DataFrame()
-td_app_live = None
-td_app_hist = None
+td_app_live = TD(login_id="wssand036", password="phani036", live_port=8086, full_feed=True)
+td_app_live.start_live_data(symbols)
 
 
 def start_truedata_server():
@@ -190,7 +190,7 @@ def mytrade_callback_sandbox(tick_data):
 
 
 # TODO: uncomment this when testing using real data
-# @td_app_live.trade_callback
+@td_app_live.trade_callback
 def mytrade_callback(tick_data):
     global symbol_ticks
     default_log.debug(f"Tick > {tick_data}")
@@ -327,4 +327,5 @@ def get_extra_ticks_for_symbol(symbol: str, time_frame: int):
 
 
 if __name__ == "__main__":
-    get_extra_ticks_for_symbol("ICICIBANK", 5)
+    td_app_live = TD(login_id="wssand036", password="phani036", live_port=8086, full_feed=True)
+    # get_extra_ticks_for_symbol("ICICIBANK", 5)

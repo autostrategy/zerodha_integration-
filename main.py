@@ -22,7 +22,8 @@ from api.event_management.event_managment_crud_api import event_router
 from external_services.global_datafeed.get_data import start_global_data_feed_server, \
     stop_providing_ticks_of_all_symbols
 from external_services.zerodha.zerodha_orders import check_open_position_status_and_close, get_indices_data, \
-    get_access_token
+    get_access_token, read_holiday_list
+from external_services.zerodha.zerodha_ticks_service import start_kite_ticker
 from logic.zerodha_integration_management.zerodha_integration_logic import restart_event_threads, \
     store_all_symbol_budget, store_all_timeframe_budget, set_zerodha_margin_value, continue_alerts
 from standard_responses.standard_json_response import standard_json_response
@@ -107,6 +108,7 @@ async def startup():
     # asyncio.create_task(expire_time_check())
     get_access_token()
     get_indices_data()
+    read_holiday_list()
     # start_kite_ticker()
     # Create a thread for the start_truedata_server function
     # Create a separate thread for the scheduled task
@@ -121,20 +123,22 @@ async def startup():
     # Load all timeframe budgets and trade details
     store_all_timeframe_budget()
 
-    if (not config.sandbox_mode) and os.path.exists("access_token.txt"):
+    # if (not config.sandbox_mode) and os.path.exists("access_token.txt"):
+    if os.path.exists("access_token.txt"):
         # Set the equity
-        set_zerodha_margin_value()
+        # set_zerodha_margin_value()
+        start_kite_ticker()
 
     # GLOBAL FEED DATA SERVER
-    global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
+    # global_feed_data_thread = threading.Thread(target=start_global_data_feed_server)
     # Start the thread
-    global_feed_data_thread.start()
+    # global_feed_data_thread.start()
 
     # Wait 5 seconds till GLOBAL data feed is not authenticated
-    if not config.sandbox_mode:
-        time.sleep(5)
-        restart_event_threads()
-        continue_alerts()
+    # if not config.sandbox_mode:
+    # time.sleep(5)
+    # restart_event_threads()
+    # continue_alerts()
 
 
 def create_app():

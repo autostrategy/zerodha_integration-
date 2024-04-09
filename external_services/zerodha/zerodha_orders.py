@@ -1,6 +1,6 @@
 import re
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional
 
 import pandas as pd
@@ -8,7 +8,7 @@ import pytz
 from kiteconnect import KiteConnect
 
 from config import zerodha_api_key, symbol_tokens_map, use_global_feed, \
-    zerodha_access_token, zerodha_api_secret, stop_trade_time
+    zerodha_access_token, zerodha_api_secret, stop_trade_time, can_place_order
 from typing_extensions import Union
 
 from config import default_log, instrument_tokens_map
@@ -16,12 +16,33 @@ from data.enums.signal_type import SignalType
 import requests
 
 from external_services.global_datafeed.get_data import get_global_data_feed_historical_data, get_use_simulation_status
+from external_services.zerodha.zerodha_ticks_service import get_zerodha_market_data, start_kite_ticker
 
 provide_historical_data = False
 provide_minute_data = True
 kite_access_token = ""
 
 TOKEN_FILE_PATH = 'access_token.txt'
+holiday_dates = []
+
+
+def read_holiday_list():
+    global holiday_dates
+    default_log.debug(f"inside read_holiday_list with existing holiday dates={holiday_dates}")
+    file_name = f"holiday_list_{str(datetime.now().year)}.txt"
+
+    try:
+        with open(file_name, 'r') as file:
+            for line in file:
+                dates = line.strip().split(',')
+                for date_str in dates:
+                    # Convert date string to datetime.date object
+                    date_obj = datetime.strptime(date_str.strip(), '%d-%m-%Y').date()
+                    holiday_dates.append(date_obj)
+        default_log.debug(f"All holiday dates stored: {holiday_dates}")
+        return holiday_dates
+    except FileNotFoundError:
+        default_log.debug(f"{file_name} File not found!")
 
 
 def get_access_token():
@@ -32,6 +53,7 @@ def get_access_token():
             access_token = file.read().strip()
             default_log.debug(f"Using the following access_token={access_token}")
             kite_access_token = access_token
+            return access_token
     except FileNotFoundError:
         kite_access_token = ""
         return ""
@@ -60,6 +82,7 @@ def get_access_token_from_request_token(request_token: str):
                           f"now setting the access token ({access_token}) to kite_access_token global variable")
         kite_access_token = access_token
         save_access_token(access_token)
+        start_kite_ticker()
         return access_token
     except Exception as e:
         default_log.debug(f"An error occurred while getting access token for request_token={request_token}. "
@@ -157,24 +180,61 @@ class KiteSandbox:
                 default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
             time_frame = extract_integer_from_string(interval)
 
-            hist_data = get_global_data_feed_historical_data(
-                            trading_symbol=symbol,
-                            time_frame=int(time_frame),
-                            from_time=from_date,
-                            to_time=to_date
-                        )
+            kite_connect = get_kite_account_api()
+
+            if (from_date is not None) and (to_date is not None):
+                default_log.debug(f"As from_date={from_date} and to_date={to_date} is not None so fetching "
+                                  f"historical data for symbol={symbol} with time_frame={time_frame}")
+                hist_data = kite_connect.historical_data(
+                    instrument_token=instrument_token,
+                    from_date=from_date,
+                    to_date=to_date,
+                    interval=interval
+                )
+
+                historical_data = hist_data[-1]
+                formatted_hist_data = {
+                    'timestamp': historical_data['date'],
+                    'open': historical_data['open'],
+                    'high': historical_data['high'],
+                    'low': historical_data['low'],
+                    'close': historical_data['close']
+                }
+                return formatted_hist_data
+
+            hist_data = get_zerodha_market_data(
+                trading_symbol=symbol,
+                time_frame=time_frame
+            )
 
             default_log.debug(
-                f"[LIVE] Gobal Data Feed historical data returned for symbol={symbol} and time_frame={interval} "
+                f"[LIVE] Zerodha historical data returned for symbol={symbol} and time_frame={interval} "
                 f"from {from_date} to {to_date}: {hist_data}")
 
             if len(hist_data) == 0:
-                default_log.debug(f"data not found on truedata from_date={from_date} and to_date={to_date}")
+                default_log.debug(f"data not found on Zerodha from_date={from_date} and to_date={to_date}")
                 return []
 
             sorted_historical_data = sorted(hist_data, key=lambda x: x['timestamp'])
 
-            return [sorted_historical_data[-1]]
+            # hist_data = get_global_data_feed_historical_data(
+            #                 trading_symbol=symbol,
+            #                 time_frame=int(time_frame),
+            #                 from_time=from_date,
+            #                 to_time=to_date
+            #             )
+            #
+            # default_log.debug(
+            #     f"[LIVE] Gobal Data Feed historical data returned for symbol={symbol} and time_frame={interval} "
+            #     f"from {from_date} to {to_date}: {hist_data}")
+            #
+            # if len(hist_data) == 0:
+            #     default_log.debug(f"data not found on truedata from_date={from_date} and to_date={to_date}")
+            #     return []
+            #
+            # sorted_historical_data = sorted(hist_data, key=lambda x: x['timestamp'])
+
+            return sorted_historical_data
 
         if provide_minute_data:
             actual_interval = self.extract_minutes_from_string(interval)
@@ -271,6 +331,7 @@ def store_access_token_of_kiteconnect(access_token: str):
 
     save_access_token(access_token)
     kite_access_token = access_token
+    start_kite_ticker()
 
 
 def check_open_position_status_and_close():
@@ -330,6 +391,44 @@ def check_open_position_status_and_close():
         os.remove("access_token.txt")
     except Exception as e:
         default_log.debug(f"An error occurred while removing access_token.txt file. Error: {e}")
+
+
+def get_instrument_token_for_symbol_for_ticks(symbol: str, exchange: str = "NFO"):
+    default_log.debug(f"inside get_instrument_token_for_symbol with symbol={symbol} and "
+                      f"exchange={exchange}")
+
+    try:
+        file_path = f"instrument_tokens_of_zerodha_{datetime.now().date()}.csv"
+        instrument_tokens_df = pd.read_csv(file_path)
+        segment = "NFO-FUT"
+        # if exchange == "NSE":
+        instrument_filtered_by_exchange = instrument_tokens_df[
+            (instrument_tokens_df['exchange'] == exchange) & (instrument_tokens_df['segment'] == segment)]
+        instruments_filtered_by_trading_symbol = instrument_filtered_by_exchange[
+            instrument_tokens_df['name'] == symbol]
+
+        # instruments_filtered_by_trading_symbol['expiry'] = pd.to_datetime(
+        #     instruments_filtered_by_trading_symbol['expiry'], format='%d-%m-%Y')
+        instruments_filtered_by_trading_symbol['expiry'] = pd.to_datetime(
+            instruments_filtered_by_trading_symbol['expiry'], format='%Y-%m-%d')
+        current_date = pd.to_datetime(datetime.today())
+
+        instruments_filtered_by_expiry_date = instruments_filtered_by_trading_symbol[
+            pd.to_datetime(instruments_filtered_by_trading_symbol['expiry']).dt.month == current_date.month
+        ]
+
+        if not instruments_filtered_by_expiry_date.empty:
+            instrument_token = instruments_filtered_by_expiry_date.iloc[0]['instrument_token']
+            default_log.debug(f"Instrument token found for symbol={symbol} and exchange={exchange}: {instrument_token}")
+            return int(instrument_token)
+        else:
+            default_log.debug(f"Instrument token not found for symbol={symbol} and exchange={exchange}")
+            return None
+
+    except Exception as e:
+        default_log.debug(f"An error occurred while instrument token id for symbol={symbol} and "
+                          f"exchange={exchange}. Error: {e}")
+        return None
 
 
 def get_instrument_token_for_symbol(symbol: str, exchange: str = "NSE"):
@@ -577,8 +676,17 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
             default_log.debug(f"As next thursday date ({next_thursday_date}) is falls in the "
                               f"next month ({current_date.month + 1}) instead of the current_month "
                               f"({current_date.month}) so using the following format "
-                              f"for timestamp => YYMMM")
-            formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+                              f"for timestamp => YYMMDD")
+
+            # todo: Update this code
+            # holiday_date = date(2024, 4, 11)
+            if next_thursday_date.date() in holiday_dates:
+                default_log.debug(f"As Next Thursday date ({next_thursday_date}) is a holiday_date so "
+                                  f"subtracting 1 day from the date")
+                next_thursday_date = next_thursday_date.date() - timedelta(days=1)
+            formatted_next_expiry_date = next_thursday_date.strftime("%y%m%d").replace("0", "", 1)
+            # formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+
         # Check if next Thursday date is the last thursday of the month
         elif next_to_next_thursday_date.month > current_date.month:
             default_log.debug(f"As next thursday date ({next_thursday_date}) is the last thursday "
@@ -586,6 +694,14 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
                               f"for timestamp => YYMMM")
             formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
         else:
+
+            # todo: Update this code
+            # holiday_date = date(2024, 4, 11)
+            if next_thursday_date.date() in holiday_dates:
+                default_log.debug(f"As Next Thursday date ({next_thursday_date}) is a holiday_date so "
+                                  f"subtracting 1 day from the date")
+                next_thursday_date = next_thursday_date.date() - timedelta(days=1)
+
             # Format as YYMMDD if next Thursday is in the same month
             formatted_next_expiry_date = next_thursday_date.strftime("%y%m%d").replace("0", "", 1)
     else:
@@ -597,23 +713,34 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
         default_log.debug(f"Days until next Wednesday: {days_until_next_wednesday}")
 
         if days_until_next_wednesday < 3:
-            # Calculate the next Thursday's date
+            # Calculate the next Wednesday's date
             next_wednesday_date = current_date + timedelta(days=(2 - current_date.weekday() + 7) % 7 + 7)
         else:
-            # Calculate the next Thursday's date
+            # Calculate the next Wednesday's date
             next_wednesday_date = current_date + timedelta(days=days_until_next_wednesday)
 
         next_to_next_wednesday_date = next_wednesday_date + timedelta(days=7)
         default_log.debug(f"Next to Next Wednesday date is={next_to_next_wednesday_date}")
 
-        # Check if the next Thursday falls in the next month
+        # Check if the next Wednesday falls in the next month
+        # Next week date (Wed / Thu) -> Expiry
+        # If wed / thu is the last wed/thu of the month -> 24306
         if next_wednesday_date.month > current_date.month:
             # Format as YYMMM if next Wednesday is in the next month
             default_log.debug(f"As next wednesday date ({next_wednesday_date}) is falls in the "
                               f"next month ({current_date.month + 1}) instead of the current_month "
                               f"({current_date.month}) so using the following format "
-                              f"for timestamp => YYMMM")
-            formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+                              f"for timestamp => YYMMDD")
+            # todo: Update this code
+            # holiday_date = date(2024, 4, 17)
+            if next_wednesday_date.date() in holiday_dates:
+                default_log.debug(f"As Next Wednesday date ({next_wednesday_date}) is a holiday_date so "
+                                  f"subtracting 1 day from the date")
+                next_wednesday_date = next_wednesday_date.date() - timedelta(days=1)
+            # formatted_next_expiry_date = next_wednesday_date.strftime("%y%m%d").replace("0", "", 1)
+            formatted_next_expiry_date = next_wednesday_date.strftime("%y%m%d").replace("0", "", 1)
+            # formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
+
             # Check if next Thursday date is the last thursday of the month
         elif next_to_next_wednesday_date.month > current_date.month:
             default_log.debug(f"As next wednesday date ({next_wednesday_date}) is the last wednesday "
@@ -621,8 +748,18 @@ def get_indices_symbol_for_trade(trading_symbol: str, price: float, transaction_
                               f"for timestamp => YYMMM")
             formatted_next_expiry_date = datetime.now().strftime("%y%b").upper()
         else:
-            # Format as YYMMDD if next Thursday is in the same month
+            # todo: Update this code
+            # holiday_date = date(2024, 4, 17)
+            if next_wednesday_date.date() in holiday_dates:
+                default_log.debug(
+                    f"As Next Wednesday date ({next_wednesday_date}) is a holiday_date so "
+                    f"subtracting 1 day from the date")
+                next_wednesday_date = next_wednesday_date.date() - timedelta(days=1)
+            # formatted_next_expiry_date = next_wednesday_date.strftime("%y%m%d").replace("0", "", 1)
             formatted_next_expiry_date = next_wednesday_date.strftime("%y%m%d").replace("0", "", 1)
+
+            # Format as YYMMDD if next Wednesday is in the same month
+            # formatted_next_expiry_date = next_wednesday_date.strftime("%y%m%d").replace("0", "", 1)
 
     default_log.debug(f"Formatted Next Expiry Date for trading_symbol={trading_symbol} is {formatted_next_expiry_date}")
 
@@ -743,17 +880,21 @@ def place_zerodha_order(
                       f"exchange={exchange} "
                       f"average_price={average_price} ")
 
+    if not can_place_order:
+        default_log.debug(f"Cannot place trade as can_place_order={can_place_order}")
+        return None
+    # pass
     try:
 
         # Check if trade can be placed or not
         # Stop Placing Trades after 14:45 IST or 9:15 UTC
-        use_simulation = get_use_simulation_status()
-        if not use_simulation:
-            if datetime.now() > stop_trade_time:
-                default_log.debug(f"Current Datetime ({datetime.now()}) is greater than Stop Trade Time "
-                                  f"({stop_trade_time}), so stopping event tracking for trading_symbol={trading_symbol}"
-                                  f"having exchange={exchange}")
-                return
+        # use_simulation = get_use_simulation_status()
+        # if not use_simulation:
+        #     if datetime.now() > stop_trade_time:
+        #         default_log.debug(f"Current Datetime ({datetime.now()}) is greater than Stop Trade Time "
+        #                           f"({stop_trade_time}), so stopping event tracking for trading_symbol={trading_symbol}"
+        #                           f"having exchange={exchange}")
+        #         return
 
         # Place a Market Order
         order_params = {
@@ -1056,8 +1197,10 @@ def get_status_of_zerodha_order(
         default_log.debug(f"An error occurred while get zerodha order details for id={zerodha_order_id}. Error: {e}")
 
 
-def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_date: Optional[datetime] = None,
-                        to_date: Optional[datetime] = None, interval: str = ""):
+def get_historical_data(
+        kite_connect: KiteConnect, instrument_token: int, from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None, interval: str = ""
+):
     default_log.debug(f"inside historical_data with "
                       f"instrument_token={instrument_token} "
                       f"from_date={from_date} "
@@ -1072,28 +1215,10 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
         default_log.debug(f"Symbol Details fetched for instrument_token ({inst_token}) => {symbol}")
 
     try:
-        if use_global_feed:
 
-            hist_data = get_global_data_feed_historical_data(
-                            trading_symbol=symbol,
-                            time_frame=int(time_frame),
-                            from_time=from_date,
-                            to_time=to_date
-                        )
-
-            default_log.debug(
-                f"[LIVE] Global Data Feed historical data returned for symbol={symbol} and time_frame={interval} "
-                f"from {from_date} to {to_date}: {hist_data}")
-
-            if len(hist_data) == 0:
-                default_log.debug(f"data not found on truedata from_date={from_date} and to_date={to_date}")
-                return []
-
-            sorted_historical_data = sorted(hist_data, key=lambda x: x['timestamp'])
-
-        else:
-            from_date = from_date.replace(second=0).strftime('%Y-%m-%d %H:%M:%S')
-            to_date = to_date.replace(second=0).strftime('%Y-%m-%d %H:%M:%S')
+        if (from_date is not None) and (to_date is not None):
+            default_log.debug(f"As from_date={from_date} and to_date={to_date} is not None so fetching "
+                              f"historical data for symbol={symbol} with time_frame={time_frame}")
             hist_data = kite_connect.historical_data(
                 instrument_token=instrument_token,
                 from_date=from_date,
@@ -1101,19 +1226,73 @@ def get_historical_data(kite_connect: KiteConnect, instrument_token: int, from_d
                 interval=interval
             )
 
-            if len(hist_data) == 0:
-                default_log.debug(f"data not found on zerodha from_date={from_date} and to_date={to_date}")
-                return []
+            historical_data = hist_data[-1]
+            formatted_hist_data = {
+                'timestamp': historical_data['date'],
+                'open': historical_data['open'],
+                'high': historical_data['high'],
+                'low': historical_data['low'],
+                'close': historical_data['close']
+            }
+            return formatted_hist_data
 
-            default_log.debug(
-                f"[LIVE] Historical Data retrieved from_date={from_date} and to_date={to_date}: {hist_data} for "
-                f"instrument_token={instrument_token} and interval={interval} ")
+        hist_data = get_zerodha_market_data(
+            trading_symbol=symbol,
+            time_frame=time_frame
+        )
 
-            sorted_historical_data = sorted(hist_data, key=lambda x: x['date'])
+        default_log.debug(
+                f"[LIVE] Zerodha historical data returned for symbol={symbol} and time_frame={interval} "
+                f"from {from_date} to {to_date}: {hist_data}")
 
-        default_log.debug(f"Sorted historical data for instrument_toke={instrument_token} and interval={interval}"
-                          f"with from_date={from_date} and to_date={to_date}: "
-                          f"{sorted_historical_data}")
+        if len(hist_data) == 0:
+            default_log.debug(f"data not found on Zerodha from_date={from_date} and to_date={to_date}")
+            return []
+
+        sorted_historical_data = sorted(hist_data, key=lambda x: x['timestamp'])
+
+        # if use_global_feed:
+        #
+        #     hist_data = get_global_data_feed_historical_data(
+        #                     trading_symbol=symbol,
+        #                     time_frame=int(time_frame),
+        #                     from_time=from_date,
+        #                     to_time=to_date
+        #                 )
+        #
+        #     default_log.debug(
+        #         f"[LIVE] Global Data Feed historical data returned for symbol={symbol} and time_frame={interval} "
+        #         f"from {from_date} to {to_date}: {hist_data}")
+        #
+        #     if len(hist_data) == 0:
+        #         default_log.debug(f"data not found on truedata from_date={from_date} and to_date={to_date}")
+        #         return []
+        #
+        #     sorted_historical_data = sorted(hist_data, key=lambda x: x['timestamp'])
+        #
+        # else:
+        #     from_date = from_date.replace(second=0).strftime('%Y-%m-%d %H:%M:%S')
+        #     to_date = to_date.replace(second=0).strftime('%Y-%m-%d %H:%M:%S')
+        #     hist_data = kite_connect.historical_data(
+        #         instrument_token=instrument_token,
+        #         from_date=from_date,
+        #         to_date=to_date,
+        #         interval=interval
+        #     )
+        #
+        #     if len(hist_data) == 0:
+        #         default_log.debug(f"data not found on zerodha from_date={from_date} and to_date={to_date}")
+        #         return []
+        #
+        #     default_log.debug(
+        #         f"[LIVE] Historical Data retrieved from_date={from_date} and to_date={to_date}: {hist_data} for "
+        #         f"instrument_token={instrument_token} and interval={interval} ")
+        #
+        #     sorted_historical_data = sorted(hist_data, key=lambda x: x['date'])
+        #
+        # default_log.debug(f"Sorted historical data for instrument_toke={instrument_token} and interval={interval}"
+        #                   f"with from_date={from_date} and to_date={to_date}: "
+        #                   f"{sorted_historical_data}")
 
         return sorted_historical_data
     except Exception as e:
@@ -1165,7 +1344,45 @@ def get_zerodha_order_details(kite: Union[KiteConnect, KiteSandbox], zerodha_ord
         return None
 
 
-if __name__ == "__main__":
-    symbol = get_symbol_for_instrument_token(str(738561))
+def get_historical_data_for_token(instrument_token: int, time_frame: int):
+    default_log.debug(f"inside get_historical_data_for_token with instrument_token={instrument_token} and "
+                      f"time_frame={time_frame}")
 
-    default_log.debug(f"Symbol for instrument_token (738561) => {symbol}")
+    kite = get_kite_account_api()
+
+    # to_time = datetime.now(tz=pytz.timezone("Asia/Kolkata")) + timedelta(minutes=time_frame)
+    to_time = datetime.now(tz=pytz.timezone("Asia/Kolkata"))
+    to_time = to_time.replace(second=0, microsecond=0)
+    from_time = datetime.now(tz=pytz.timezone("Asia/Kolkata")) - timedelta(minutes=time_frame)
+    from_time = from_time.replace(second=0, microsecond=0)
+
+    interval = str(time_frame) + 'minute'
+    if time_frame == 1:
+        interval = 'minute'
+
+    hist_data = kite.historical_data(
+        instrument_token=instrument_token,
+        from_date=from_time,
+        to_date=to_time,
+        interval=interval
+    )
+
+    default_log.debug(f"Historical Data found for instrument_token={instrument_token} with timeframe={time_frame} "
+                      f"from_time={from_time} and to_time={to_time}: {hist_data}")
+    historical_data = hist_data[-1]
+    formatted_hist_data = {
+        'timestamp': historical_data['date'],
+        'open': historical_data['open'],
+        'high': historical_data['high'],
+        'low': historical_data['low'],
+        'close': historical_data['close']
+    }
+    return formatted_hist_data
+
+
+# if __name__ == "__main__":
+    # read_holiday_list()
+    # symbol = get_indices_symbol_for_trade("BANKNIFTY", 48322, SignalType.BUY)
+    # # symbol = get_instrument_token_for_symbol_for_ticks("NIFTY")
+    #
+    # default_log.debug(f"Symbol for instrument_token (738561) => {symbol}")
